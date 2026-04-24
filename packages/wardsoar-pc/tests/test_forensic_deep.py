@@ -15,15 +15,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.forensic.attack_mapper import AttackMapper, TechniqueMatch
-from src.forensic.deep_orchestrator import DeepAnalysisOrchestrator
-from src.forensic.export import DeepReportExporter, default_zip_name
-from src.forensic.ioc_extractor import IocExtractor, to_csv, to_stix_bundle
-from src.forensic.manifest import ForensicManifest, ManifestEntry
-from src.forensic.report_pdf import build_report_pdf
-from src.forensic.storage import ProtectedEvidenceStorage
-from src.forensic.timeline import TimelineBuilder, to_plaso_csv
-from src.models import (
+from wardsoar.pc.forensic.attack_mapper import AttackMapper, TechniqueMatch
+from wardsoar.pc.forensic.deep_orchestrator import DeepAnalysisOrchestrator
+from wardsoar.pc.forensic.export import DeepReportExporter, default_zip_name
+from wardsoar.pc.forensic.ioc_extractor import IocExtractor, to_csv, to_stix_bundle
+from wardsoar.pc.forensic.manifest import ForensicManifest, ManifestEntry
+from wardsoar.pc.forensic.report_pdf import build_report_pdf
+from wardsoar.pc.forensic.storage import ProtectedEvidenceStorage
+from wardsoar.pc.forensic.timeline import TimelineBuilder, to_plaso_csv
+from wardsoar.core.models import (
     DecisionRecord,
     ForensicResult,
     IPReputation,

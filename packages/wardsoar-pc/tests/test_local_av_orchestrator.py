@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.local_av.orchestrator import FileScanOrchestrator
-from src.models import VirusTotalResult
+from wardsoar.pc.local_av.orchestrator import FileScanOrchestrator
+from wardsoar.core.models import VirusTotalResult
 
 # ---------------------------------------------------------------------------
 # Helpers

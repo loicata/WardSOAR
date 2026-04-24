@@ -623,7 +623,9 @@
       "Bash(.venv/Scripts/python.exe -c \"from src.process_snapshot_buffer import attach_buffer_to_analyzer; print\\('shim OK'\\)\")",
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/wardsoar/pc/)",
       "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-pc/src/)",
-      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-pc/src/wardsoar/pc/)"
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-pc/src/wardsoar/pc/)",
+      "Bash(sed -i 's|from wardsoar\\\\.core\\\\.main import|from src.main import|g' packages/wardsoar-pc/src/wardsoar/pc/ui/app.py packages/wardsoar-pc/src/wardsoar/pc/ui/engine_bridge.py)",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/)"
     ]
   }
 }

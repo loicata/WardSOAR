@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.local_av.defender import DefenderScanner
+from wardsoar.pc.local_av.defender import DefenderScanner
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,7 +97,7 @@ class TestScan:
     async def test_threat_detected(self, fake_mpcmdrun: Path) -> None:
         scanner = DefenderScanner({"mpcmdrun_path": str(fake_mpcmdrun)})
 
-        with patch("src.local_av.defender.subprocess") as mock_sub:
+        with patch("wardsoar.pc.local_av.defender.subprocess") as mock_sub:
             mock_sub.run.return_value = _completed("Threat  : TrojanTest\n", returncode=2)
             mock_sub.CREATE_NO_WINDOW = 0x08000000
 
@@ -112,7 +112,7 @@ class TestScan:
     async def test_clean_verdict(self, fake_mpcmdrun: Path) -> None:
         scanner = DefenderScanner({"mpcmdrun_path": str(fake_mpcmdrun)})
 
-        with patch("src.local_av.defender.subprocess") as mock_sub:
+        with patch("wardsoar.pc.local_av.defender.subprocess") as mock_sub:
             mock_sub.run.return_value = _completed("No threats found.\n", returncode=0)
             mock_sub.CREATE_NO_WINDOW = 0x08000000
 
@@ -128,7 +128,7 @@ class TestScan:
         """Non-zero rc without parseable threat name → fail-safe None."""
         scanner = DefenderScanner({"mpcmdrun_path": str(fake_mpcmdrun)})
 
-        with patch("src.local_av.defender.subprocess") as mock_sub:
+        with patch("wardsoar.pc.local_av.defender.subprocess") as mock_sub:
             mock_sub.run.return_value = _completed("ERROR: Engine busy\n", returncode=1)
             mock_sub.CREATE_NO_WINDOW = 0x08000000
 
@@ -140,7 +140,7 @@ class TestScan:
     async def test_timeout_returns_none(self, fake_mpcmdrun: Path) -> None:
         scanner = DefenderScanner({"mpcmdrun_path": str(fake_mpcmdrun), "timeout_seconds": 1})
 
-        with patch("src.local_av.defender.subprocess") as mock_sub:
+        with patch("wardsoar.pc.local_av.defender.subprocess") as mock_sub:
             mock_sub.run.side_effect = TimeoutExpired(cmd="MpCmdRun", timeout=1)
             mock_sub.CREATE_NO_WINDOW = 0x08000000
 
@@ -152,7 +152,7 @@ class TestScan:
     async def test_os_error_returns_none(self, fake_mpcmdrun: Path) -> None:
         scanner = DefenderScanner({"mpcmdrun_path": str(fake_mpcmdrun)})
 
-        with patch("src.local_av.defender.subprocess") as mock_sub:
+        with patch("wardsoar.pc.local_av.defender.subprocess") as mock_sub:
             mock_sub.run.side_effect = OSError("Access denied")
             mock_sub.CREATE_NO_WINDOW = 0x08000000
 

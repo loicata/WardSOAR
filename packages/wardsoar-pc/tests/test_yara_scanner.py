@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.local_av.yara_scanner import YaraScanner
+from wardsoar.pc.local_av.yara_scanner import YaraScanner
 
 # ---------------------------------------------------------------------------
 # Helpers

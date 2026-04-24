@@ -20,20 +20,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.forensic.acquisition import VolatileAcquirer
-from src.forensic.manifest import (
+from wardsoar.pc.forensic.acquisition import VolatileAcquirer
+from wardsoar.pc.forensic.manifest import (
     ForensicManifest,
     ManifestEntry,
     sha256_bytes,
     sha256_file,
 )
-from src.forensic.memory import DumpResult, MinidumpWriter
-from src.forensic.orchestrator import (
+from wardsoar.pc.forensic.memory import DumpResult, MinidumpWriter
+from wardsoar.pc.forensic.orchestrator import (
     QuickAcquisitionManager,
     build_default_manager,
 )
-from src.forensic.storage import ENCRYPTED_EXTENSION, ProtectedEvidenceStorage
-from src.models import SuricataAlert, SuricataAlertSeverity
+from wardsoar.pc.forensic.storage import ENCRYPTED_EXTENSION, ProtectedEvidenceStorage
+from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
 # ---------------------------------------------------------------------------
 # Helpers

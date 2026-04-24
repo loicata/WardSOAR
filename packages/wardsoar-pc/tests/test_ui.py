@@ -11,12 +11,12 @@ from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, setTheme
 
 
-from src.ui.app import MainWindow, TrayManager, _create_status_icon
-from src.ui.views.alert_detail import AlertDetailView
-from src.ui.views.alerts import AlertsView
-from src.ui.views.config_view import ConfigView, DiffDialog
-from src.ui.views.dashboard import DashboardView, _display_labels
-from src.ui.views.replay_view import ReplayView
+from wardsoar.pc.ui.app import MainWindow, TrayManager, _create_status_icon
+from wardsoar.pc.ui.views.alert_detail import AlertDetailView
+from wardsoar.pc.ui.views.alerts import AlertsView
+from wardsoar.pc.ui.views.config_view import ConfigView, DiffDialog
+from wardsoar.pc.ui.views.dashboard import DashboardView, _display_labels
+from wardsoar.pc.ui.views.replay_view import ReplayView
 
 
 # Shared QApplication for all UI tests
