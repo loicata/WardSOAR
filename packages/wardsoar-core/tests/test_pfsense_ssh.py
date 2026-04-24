@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
 
 # ---------------------------------------------------------------------------
 # PfSenseSSH tests
@@ -49,7 +49,7 @@ class TestPfSenseSSHRunCmd:
         mock_conn = AsyncMock()
         mock_conn.run = AsyncMock(return_value=mock_result)
 
-        with patch("src.pfsense_ssh.asyncssh") as mock_asyncssh:
+        with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
             mock_asyncssh.connect.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
             mock_asyncssh.connect.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -64,7 +64,7 @@ class TestPfSenseSSHRunCmd:
         mock_conn = AsyncMock()
         mock_conn.run = AsyncMock(return_value=mock_result)
 
-        with patch("src.pfsense_ssh.asyncssh") as mock_asyncssh:
+        with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
             mock_asyncssh.connect.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
             mock_asyncssh.connect.return_value.__aexit__ = AsyncMock(return_value=None)
 
@@ -77,8 +77,8 @@ class TestPfSenseSSHRunCmd:
         # Zero the retry delay so we don't spend 3 seconds waiting for the
         # backoff between three identical OSError raises.
         with (
-            patch("src.pfsense_ssh.asyncssh") as mock_asyncssh,
-            patch("src.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
+            patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh,
+            patch("wardsoar.core.remote_agents.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
         ):
             # Make the context manager itself raise OSError
             cm = AsyncMock()
@@ -116,8 +116,8 @@ class TestPfSenseSSHRunCmd:
         second_cm.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("src.pfsense_ssh.asyncssh") as mock_asyncssh,
-            patch("src.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
+            patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh,
+            patch("wardsoar.core.remote_agents.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
         ):
             mock_asyncssh.connect.side_effect = [first_cm, second_cm]
 
@@ -140,8 +140,8 @@ class TestPfSenseSSHRunCmd:
         mock_conn.run = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.pfsense_ssh.asyncssh") as mock_asyncssh,
-            patch("src.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
+            patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh,
+            patch("wardsoar.core.remote_agents.pfsense_ssh._SSH_RETRY_BASE_DELAY_S", 0.0),
         ):
             cm = AsyncMock()
             cm.__aenter__ = AsyncMock(return_value=mock_conn)

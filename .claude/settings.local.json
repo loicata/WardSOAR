@@ -601,7 +601,11 @@
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 src/*.py packages/wardsoar-core/src/wardsoar/core/)",
       "Bash(.venv/Scripts/python.exe -m ruff check src/ packages/wardsoar-core/src/)",
       "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/)",
-      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.core.config import get_data_dir; print\\('data_dir =', get_data_dir\\(\\)\\)\")"
+      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.core.config import get_data_dir; print\\('data_dir =', get_data_dir\\(\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
+      "Bash(.venv/Scripts/python.exe -m black --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)"
     ]
   }
 }

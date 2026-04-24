@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.pfsense_suricata_tune import (
+from wardsoar.core.remote_agents.pfsense_suricata_tune import (
     SuricataTuneResult,
     apply_suricata_runmode,
     patch_runmode,

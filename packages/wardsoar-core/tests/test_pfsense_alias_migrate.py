@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.pfsense_alias_migrate import (
+from wardsoar.core.remote_agents.pfsense_alias_migrate import (
     AliasMigrationResult,
     REMOTE_CONFIG_XML_PATH,
     migrate_alias_to_urltable,
     migrate_xml_in_place,
 )
-from src.pfsense_aliastable import DEFAULT_ALIAS_DIR, DEFAULT_ALIAS_FILE_PATH
+from wardsoar.core.remote_agents.pfsense_aliastable import DEFAULT_ALIAS_DIR, DEFAULT_ALIAS_FILE_PATH
 
 # ---------------------------------------------------------------------------
 # Fixtures — mini config.xml snippets

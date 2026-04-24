@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.pfsense_aliastable import (
+from wardsoar.core.remote_agents.pfsense_aliastable import (
     DEFAULT_ALIAS_DIR,
     DEFAULT_ALIAS_FILE_PATH,
     DEFAULT_TABLE_NAME,
