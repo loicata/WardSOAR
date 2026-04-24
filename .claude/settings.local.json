@@ -664,7 +664,11 @@
       "Bash(grep -oP '\"message\": \"[^\"]{0,150}')",
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ packages/wardsoar-pc/tests/)",
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/ packages/wardsoar-pc/src/wardsoar/pc/single_instance.py packages/wardsoar-pc/src/wardsoar/pc/ui/ssh_streamer.py packages/wardsoar-pc/src/wardsoar/pc/ui/app.py)",
-      "Bash(.venv/Scripts/python.exe -m ruff check packages/)"
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/)",
+      "Bash(sed -i 's|Version=\"0\\\\.22\\\\.7\"|Version=\"0.22.8\"|g' installer/ward.wxs)",
+      "Bash(sed -i 's|Current version: \\\\*\\\\*0\\\\.22\\\\.7\\\\*\\\\* \\(2026-04-24\\)|Current version: **0.22.8** \\(2026-04-24\\)|g' README.md)",
+      "Bash(rm -rf build/ dist/WardSOAR/ dist/*.msi dist/*.wixpdb)",
+      "Bash(certutil -hashfile \"dist/WardSOAR_0.22.8.msi\" SHA256)"
     ]
   }
 }

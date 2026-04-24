@@ -18,6 +18,47 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.8 — 2026-04-24
+
+Monorepo refactor complete. No functional change over v0.22.7 — this
+release is the first to ship the new layout where the application
+code lives under ``packages/wardsoar-pc/`` and the cross-platform
+core under ``packages/wardsoar-core/``. The legacy ``src/`` tree is
+gone from the source distribution.
+
+- **File**: `WardSOAR_0.22.8.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `2e146e108773b3276cf6c29177c3de01796a0b7443e46c224a7dbe1001d399c9`
+- **Tests**: 1269 green, 2 skipped
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit — all pass
+
+### What's new
+- Two-package monorepo layout (``wardsoar-core`` +
+  ``wardsoar-pc``) built as a ``uv`` workspace. Third skeleton
+  (``wardsoar-virus-sniff``) in place for the future appliance.
+- Core is OS-agnostic: no Windows-specific import left
+  inside ``wardsoar.core``.
+- Two modules reclassified from core → pc: ``single_instance`` (uses
+  pywin32 named-mutex) and ``ssh_streamer`` (inherits from
+  ``PySide6.QtCore.QThread``).
+- ``get_data_dir()`` walks up for ``packages/`` as the monorepo
+  marker, with ``WARDSOAR_DATA_DIR`` env override for tests.
+
+### Fixes re-shipped (inherited from v0.22.7)
+All 9 bug fixes from the v0.22.7 session ride along: DPAPI
+post-block crash, pfSense ``.tmp`` race, blocking idempotence,
+intel circuit breaker + negative cache, OTX empty error messages,
+threatfox schema drift, Claude credit-exhausted breaker, forensics
+NoneType guard, SSH retry.
+
+### Breaking changes for developers
+The legacy ``src/`` package is gone. Any external script importing
+``from src.X import Y`` must switch to ``from wardsoar.core.X`` or
+``from wardsoar.pc.X`` as appropriate. See
+``docs/MONOREPO.md`` for the layout.
+
+---
+
 ## v0.22.7 — 2026-04-24
 
 First public release. Ships after a session of 9 bug fixes caught by

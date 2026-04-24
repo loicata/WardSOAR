@@ -1,6 +1,6 @@
 # WardSOAR Architecture
 
-> Last updated: 2026-04-24 (v0.22.7)
+> Last updated: 2026-04-24 (v0.22.8)
 > Source of truth for the overall design of WardSOAR and the related
 > Virus Sniff appliance. Every significant decision is logged here
 > with its rationale so that contributors, future maintainers, and
@@ -137,9 +137,11 @@ Option 2 is the mainstream approach in the modern Python ecosystem
 
 ### Status
 
-The current codebase (v0.22.7) is still pre-refactor: everything lives
-in `src/`. The migration to the monorepo layout is planned as the
-*next* architectural work, before adding the Suricata-on-PC integration.
+As of v0.22.8 the monorepo migration is **complete**. Legacy `src/`
+is gone. The two packages `wardsoar-core` (cross-platform) and
+`wardsoar-pc` (Windows desktop) carry all the runtime code;
+`wardsoar-virus-sniff` is still a skeleton and will gain its Linux
+implementation once the appliance project starts.
 
 ---
 

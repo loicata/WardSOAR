@@ -3,7 +3,7 @@
 **Autonomous Mini-SOAR** — Automated network threat detection and
 response, running on your Windows desktop.
 
-Current version: **0.22.7** (2026-04-24)
+Current version: **0.22.8** (2026-04-24)
 License: **GNU GPL-3.0**
 
 ---
@@ -86,9 +86,11 @@ cd WardSOAR
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
+# Editable install of the workspace packages
+.venv\Scripts\pip install -e packages\wardsoar-core -e packages\wardsoar-pc -e packages\wardsoar-virus-sniff
 copy .env.example .env
 # Edit .env with your API keys
-python -m src.main
+python -m wardsoar.pc.main
 ```
 
 ### Build the MSI from source
@@ -153,9 +155,13 @@ testing, Opus cross-review).
 
 ## Roadmap
 
-- **Short term** — monorepo refactor (Option 2: three independent
-  packages `wardsoar-core`, `wardsoar-pc`, `wardsoar-virus-sniff`)
-  before adding the Suricata-on-PC integration.
+- **Done (v0.22.8)** — monorepo refactor complete: three workspace
+  packages `wardsoar-core`, `wardsoar-pc`, `wardsoar-virus-sniff`
+  (skeleton). Core is OS-agnostic so it can be reused by the
+  Virus Sniff appliance without modification.
+- **Next** — Suricata-on-PC integration: make local Suricata
+  installation part of the setup wizard, so WardSOAR can run on a
+  single PC without a Netgate.
 - **Mid term** — Virus Sniff diagnostic appliance (Raspberry Pi 5 +
   Ubuntu Server 26.04 + USB Gadget transport + Firefox-based
   configuration).

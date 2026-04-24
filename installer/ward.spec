@@ -136,7 +136,7 @@ a = Analysis(
         "wardsoar.core.history_rotator",
         "wardsoar.core.manual_reviews",
         "wardsoar.core.netgate_reset",
-        "wardsoar.core.single_instance",
+        "wardsoar.pc.single_instance",
         # intel clients
         "wardsoar.core.intel",
         "wardsoar.core.intel.abuseipdb",
@@ -164,7 +164,7 @@ a = Analysis(
         "wardsoar.core.remote_agents.pfsense_aliastable",
         "wardsoar.core.remote_agents.pfsense_alias_migrate",
         "wardsoar.core.remote_agents.pfsense_suricata_tune",
-        "wardsoar.core.remote_agents.ssh_streamer",
+        "wardsoar.pc.ui.ssh_streamer",
         # --------------------------------------------------------------
         # wardsoar-pc (Windows-only desktop stack)
         # --------------------------------------------------------------
