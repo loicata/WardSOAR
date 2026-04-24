@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from src.filter import AlertFilter
-from src.models import SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.filter import AlertFilter
+from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -123,7 +123,7 @@ class TestAlertFilterInit:
 
         monkeypatch.setattr(src.config, "get_bundle_dir", lambda: bundle_root)
         # Also patch the import the filter module performs inside __init__.
-        monkeypatch.setattr("src.filter.Path", Path)
+        monkeypatch.setattr("wardsoar.core.filter.Path", Path)
 
         flt = AlertFilter({"enabled": True, "config_file": "config/known_false_positives.yaml"})
         assert 9999001 in flt._suppressed_sids

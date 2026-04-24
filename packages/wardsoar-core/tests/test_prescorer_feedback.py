@@ -11,7 +11,7 @@ import json
 import time
 from pathlib import Path
 
-from src.prescorer_feedback import (
+from wardsoar.core.prescorer_feedback import (
     DEFAULT_MAX_AGE_DAYS,
     ROLLBACK_DELTA,
     PreScorerFeedbackStore,

@@ -592,7 +592,16 @@
       "Bash(.venv/Scripts/python.exe -c \"from src.intel.abuseipdb import AbuseIpDbClient; from src.intel.threatfox import ThreatFoxRegistry; from src.intel.http_client_base import IpReputationCache, ReputationVerdict; from src.intel.manager import IntelManager; print\\('shims resolve OK'\\)\")",
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 src/intel/ packages/wardsoar-core/src/wardsoar/core/intel/ packages/wardsoar-core/tests/test_intel_*.py)",
       "Bash(.venv/Scripts/python.exe -m ruff check src/intel/ packages/wardsoar-core/src/wardsoar/core/intel/ packages/wardsoar-core/tests/test_intel_*.py)",
-      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/intel/)"
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/intel/)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_analyzer.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_ui.py -q)",
+      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.core.ip_enrichment import build_ip_enrichment_async; print\\('direct OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"from src.ip_enrichment import build_ip_enrichment_async; print\\('shim OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"from src.ip_enrichment import build_ip_enrichment_async; print\\('OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 src/*.py packages/wardsoar-core/src/wardsoar/core/)",
+      "Bash(.venv/Scripts/python.exe -m ruff check src/ packages/wardsoar-core/src/)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/)",
+      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.core.config import get_data_dir; print\\('data_dir =', get_data_dir\\(\\)\\)\")"
     ]
   }
 }

@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.models import IPReputation, SuricataAlert, SuricataAlertSeverity
-from src.prescorer import MAX_ALLOWED_THRESHOLD, AlertPreScorer, PreScoreResult
+from wardsoar.core.models import IPReputation, SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.prescorer import MAX_ALLOWED_THRESHOLD, AlertPreScorer, PreScoreResult
 
 # ---------------------------------------------------------------------------
 # Helpers

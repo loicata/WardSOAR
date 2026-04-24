@@ -2,9 +2,9 @@
 
 Covers two surfaces:
 
-* ``src.known_bad_actors.KnownActorsRegistry`` — YAML loader and
+* ``wardsoar.core.known_bad_actors.KnownActorsRegistry`` — YAML loader and
   lookup API (exact IP, CIDR, domain).
-* ``src.prescorer.AlertPreScorer`` — the new ``known_bad_actor``
+* ``wardsoar.core.prescorer.AlertPreScorer`` — the new ``known_bad_actor``
   factor: a single match must add the actor's weight and, at the
   weights shipped in ``known_bad_actors.yaml`` (100), single-handedly
   push the total past ``min_score_for_analysis`` so Opus adjudicates.
@@ -21,9 +21,9 @@ from pathlib import Path
 
 import pytest
 
-from src.known_bad_actors import ActorMatch, KnownActorsRegistry
-from src.models import SuricataAlert, SuricataAlertSeverity
-from src.prescorer import AlertPreScorer
+from wardsoar.core.known_bad_actors import ActorMatch, KnownActorsRegistry
+from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.prescorer import AlertPreScorer
 
 # ---------------------------------------------------------------------------
 # Fixtures

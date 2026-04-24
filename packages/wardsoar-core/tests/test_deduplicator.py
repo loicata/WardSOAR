@@ -7,8 +7,8 @@ process alert individually.
 from datetime import datetime, timedelta, timezone
 
 
-from src.deduplicator import AlertDeduplicator, AlertGroup
-from src.models import SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.deduplicator import AlertDeduplicator, AlertGroup
+from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
 # ---------------------------------------------------------------------------
 # Fixtures

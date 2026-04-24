@@ -18,10 +18,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.asn_enricher import AsnEnricher, AsnInfo, NullAsnEnricher, dataclass_to_dict
-from src.models import SuricataAlert, SuricataAlertSeverity
-from src.prescorer import AlertPreScorer
-from src.suspect_asns import (
+from wardsoar.core.asn_enricher import AsnEnricher, AsnInfo, NullAsnEnricher, dataclass_to_dict
+from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.prescorer import AlertPreScorer
+from wardsoar.core.suspect_asns import (
     AsnClassification,
     SuspectAsnRegistry,
     TorExitFetcher,
@@ -177,7 +177,7 @@ class TestIpinfoParser:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.get = AsyncMock(return_value=fake_response)
 
-        with patch("src.asn_enricher.httpx.AsyncClient", return_value=mock_client):
+        with patch("wardsoar.core.asn_enricher.httpx.AsyncClient", return_value=mock_client):
             info = await enricher._query_ipinfo("185.159.157.1")  # noqa: SLF001
 
         assert info is not None
@@ -201,7 +201,7 @@ class TestIpinfoParser:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.get = AsyncMock(return_value=fake_response)
 
-        with patch("src.asn_enricher.httpx.AsyncClient", return_value=mock_client):
+        with patch("wardsoar.core.asn_enricher.httpx.AsyncClient", return_value=mock_client):
             info = await enricher._query_ipinfo("185.159.157.1")  # noqa: SLF001
 
         assert info is not None
@@ -327,7 +327,7 @@ class TestTorExitFetcher:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.get = AsyncMock(return_value=fake_response)
 
-        with patch("src.suspect_asns.httpx.AsyncClient", return_value=mock_client):
+        with patch("wardsoar.core.suspect_asns.httpx.AsyncClient", return_value=mock_client):
             count = await fetcher.refresh(force=True)
 
         assert count == 2
@@ -347,7 +347,7 @@ class TestTorExitFetcher:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.get = AsyncMock(return_value=fake_response)
 
-        with patch("src.suspect_asns.httpx.AsyncClient", return_value=mock_client):
+        with patch("wardsoar.core.suspect_asns.httpx.AsyncClient", return_value=mock_client):
             assert await fetcher.refresh(force=True) == 1
             # Second call: should skip without hitting the network.
             assert await fetcher.refresh() == 0

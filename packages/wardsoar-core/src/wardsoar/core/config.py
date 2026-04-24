@@ -53,23 +53,58 @@ def get_bundle_dir() -> Path:
 def get_data_dir() -> Path:
     """Return writable data directory for config, logs, and snapshots.
 
-    In frozen mode (installed exe), uses %APPDATA%/WardSOAR to avoid
-    permission issues with Program Files. In development mode, uses the
-    project root directory.
+    In frozen mode (installed exe), uses ``%APPDATA%/WardSOAR`` to
+    avoid permission issues with Program Files. In development mode,
+    walks up from this file until a ``pyproject.toml`` is found —
+    that marker file identifies the repo root no matter where inside
+    the monorepo we live (legacy ``src/``, ``packages/wardsoar-core/
+    src/wardsoar/core/``, etc.).
+
+    An explicit ``WARDSOAR_DATA_DIR`` environment variable overrides
+    every other path — useful for tests and alternate deployments.
 
     Returns:
         Path to the writable data directory.
     """
-    if getattr(sys, "frozen", False):
-        import os
+    import os
 
+    explicit = os.environ.get("WARDSOAR_DATA_DIR")
+    if explicit:
+        data_dir = Path(explicit)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir
+
+    if getattr(sys, "frozen", False):
         appdata = os.environ.get("APPDATA", "")
         if appdata:
             data_dir = Path(appdata) / "WardSOAR"
             data_dir.mkdir(parents=True, exist_ok=True)
             return data_dir
         return Path(sys.executable).parent
-    return Path(__file__).resolve().parent.parent
+
+    # Development mode: locate the repo root by walking up for the
+    # first pyproject.toml we can find. Prior to 2026-04-24 this used
+    # ``Path(__file__).resolve().parent.parent`` which pointed at
+    # whatever two directories up from the module file — fine when
+    # the module lived at ``<repo>/src/config.py`` but broken after
+    # the monorepo move put it at
+    # ``<repo>/packages/wardsoar-core/src/wardsoar/core/config.py``.
+    # That shift caused runtime writes (``evidence/``, ``data/``,
+    # ``logs/``) to be created inside the package source tree on the
+    # first run after the refactor.
+    here = Path(__file__).resolve()
+    # Repo root = directory that owns ``packages/`` (monorepo root).
+    # Fall back to ``src/`` for the legacy layout that does not yet
+    # have a packages/ sibling.
+    for candidate in here.parents:
+        if (candidate / "packages").is_dir():
+            return candidate
+    for candidate in here.parents:
+        if (candidate / "src").is_dir() and (candidate / "pyproject.toml").is_file():
+            return candidate
+    # Last-ditch fallback: the caller's cwd. Unlikely to be hit, but
+    # avoids a crash if the loop above never matched.
+    return Path.cwd()
 
 
 # Default paths (resolved relative to writable data dir)

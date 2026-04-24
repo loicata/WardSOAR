@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from src.models import VirusTotalResult
-from src.vt_cache import VTCache
+from wardsoar.core.models import VirusTotalResult
+from wardsoar.core.vt_cache import VTCache
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -12,8 +12,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.analyzer import ThreatAnalyzer
-from src.models import (
+from wardsoar.core.analyzer import ThreatAnalyzer
+from wardsoar.core.models import (
     ForensicResult,
     NetworkContext,
     SuricataAlert,
@@ -151,7 +151,7 @@ class TestAnalyze:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
 
-        with patch("src.analyzer.anthropic") as mock_anthropic:
+        with patch("wardsoar.core.analyzer.anthropic") as mock_anthropic:
             mock_client = MagicMock()
             mock_msg = MagicMock()
             mock_msg.content = [MagicMock(text=VALID_API_RESPONSE)]
@@ -169,7 +169,7 @@ class TestAnalyze:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
 
-        with patch("src.analyzer.anthropic") as mock_anthropic:
+        with patch("wardsoar.core.analyzer.anthropic") as mock_anthropic:
             mock_client = MagicMock()
             mock_msg = MagicMock()
             mock_msg.content = [MagicMock(text=BENIGN_API_RESPONSE)]
@@ -194,7 +194,7 @@ class TestAnalyze:
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = RuntimeError("API down")
 
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client):
             result = await analyzer.analyze(_make_alert())
 
         assert result.verdict == ThreatVerdict.INCONCLUSIVE
@@ -225,9 +225,9 @@ class TestAnalyze:
         )
 
         with (
-            patch("src.analyzer.anthropic.Anthropic", return_value=mock_client),
-            patch("src.analyzer._MAX_API_RETRIES", 1),
-            patch("src.analyzer._RETRY_BASE_DELAY_SECONDS", 0),
+            patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client),
+            patch("wardsoar.core.analyzer._MAX_API_RETRIES", 1),
+            patch("wardsoar.core.analyzer._RETRY_BASE_DELAY_SECONDS", 0),
         ):
             result = await analyzer.analyze(_make_alert())
 
@@ -249,7 +249,7 @@ class TestAnalyze:
         mock_msg.content = [MagicMock(text=VALID_API_RESPONSE)]
         mock_client.messages.create.return_value = mock_msg
 
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client) as ctor:
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client) as ctor:
             import asyncio as _asyncio
 
             _asyncio.run(analyzer.analyze(_make_alert()))
@@ -266,7 +266,7 @@ class TestAnalyze:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
 
-        with patch("src.analyzer.anthropic") as mock_anthropic:
+        with patch("wardsoar.core.analyzer.anthropic") as mock_anthropic:
             mock_client = MagicMock()
             mock_msg = MagicMock()
             mock_msg.content = [MagicMock(text="Not valid JSON at all")]
@@ -282,7 +282,7 @@ class TestAnalyze:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
 
-        with patch("src.analyzer.anthropic") as mock_anthropic:
+        with patch("wardsoar.core.analyzer.anthropic") as mock_anthropic:
             mock_client = MagicMock()
             mock_msg = MagicMock()
             mock_msg.content = [MagicMock(text=VALID_API_RESPONSE)]
@@ -356,7 +356,7 @@ class TestAnalyzerCircuitBreaker:
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = credit_exc
 
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client):
             # First call fails and trips the breaker.
             result1 = await analyzer.analyze(_make_alert())
             assert result1.verdict == ThreatVerdict.INCONCLUSIVE
@@ -375,14 +375,14 @@ class TestAnalyzerCircuitBreaker:
         failure — we allow the retry loop to exhaust and accumulate N
         consecutive failures before tripping. Otherwise a single
         transient glitch would silence analysis for 15 min."""
-        from src.analyzer import _CIRCUIT_BREAKER_THRESHOLD
+        from wardsoar.core.analyzer import _CIRCUIT_BREAKER_THRESHOLD
 
         analyzer = self._make_analyzer()
 
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = RuntimeError("transient glitch")
 
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client):
             for i in range(_CIRCUIT_BREAKER_THRESHOLD):
                 result = await analyzer.analyze(_make_alert())
                 assert result.verdict == ThreatVerdict.INCONCLUSIVE
@@ -403,7 +403,7 @@ class TestAnalyzerCircuitBreaker:
         # One failure.
         mock_client_fail = MagicMock()
         mock_client_fail.messages.create.side_effect = RuntimeError("blip")
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client_fail):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client_fail):
             await analyzer.analyze(_make_alert())
         assert analyzer._consecutive_failures == 1
 
@@ -412,7 +412,7 @@ class TestAnalyzerCircuitBreaker:
         mock_msg = MagicMock()
         mock_msg.content = [MagicMock(text=VALID_API_RESPONSE)]
         mock_client_ok.messages.create.return_value = mock_msg
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client_ok):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client_ok):
             result = await analyzer.analyze(_make_alert())
         assert result.verdict == ThreatVerdict.CONFIRMED
         assert analyzer._consecutive_failures == 0
@@ -434,7 +434,7 @@ class TestAnalyzerCircuitBreaker:
         mock_msg.content = [MagicMock(text=VALID_API_RESPONSE)]
         mock_client.messages.create.return_value = mock_msg
 
-        with patch("src.analyzer.anthropic.Anthropic", return_value=mock_client):
+        with patch("wardsoar.core.analyzer.anthropic.Anthropic", return_value=mock_client):
             result = await analyzer.analyze(_make_alert())
 
         assert result.verdict == ThreatVerdict.CONFIRMED
@@ -488,7 +488,7 @@ class TestRenderProcessRiskSection:
         )
 
     def test_section_contains_pid_verdict_and_signals(self) -> None:
-        from src.analyzer import _render_process_risk_section
+        from wardsoar.core.analyzer import _render_process_risk_section
 
         out = _render_process_risk_section(self._fr_with_risk())
 
@@ -503,7 +503,7 @@ class TestRenderProcessRiskSection:
 
     def test_returns_empty_when_no_risk_block(self) -> None:
         """A process without a ``risk`` dict should not leak an empty row."""
-        from src.analyzer import _render_process_risk_section
+        from wardsoar.core.analyzer import _render_process_risk_section
 
         fr = ForensicResult(
             suspect_processes=[{"pid": 1, "name": "x.exe"}],
@@ -511,12 +511,12 @@ class TestRenderProcessRiskSection:
         assert _render_process_risk_section(fr) == ""
 
     def test_returns_empty_when_no_processes(self) -> None:
-        from src.analyzer import _render_process_risk_section
+        from wardsoar.core.analyzer import _render_process_risk_section
 
         assert _render_process_risk_section(ForensicResult()) == ""
 
     def test_includes_services_for_svchost(self) -> None:
-        from src.analyzer import _render_process_risk_section
+        from wardsoar.core.analyzer import _render_process_risk_section
 
         fr = ForensicResult(
             suspect_processes=[
@@ -544,8 +544,8 @@ class TestBudgetForSeverity:
     sensible default for exotic severity values."""
 
     def test_sev1_gets_the_largest_budget(self) -> None:
-        from src.analyzer import _budget_for
-        from src.models import SuricataAlert, SuricataAlertSeverity
+        from wardsoar.core.analyzer import _budget_for
+        from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
         alert = SuricataAlert(
             timestamp=datetime(2026, 4, 20, 0, 0, tzinfo=timezone.utc),
@@ -563,8 +563,8 @@ class TestBudgetForSeverity:
         assert b["forensic"] >= 10000
 
     def test_sev3_is_smaller_than_sev1(self) -> None:
-        from src.analyzer import _budget_for
-        from src.models import SuricataAlert, SuricataAlertSeverity
+        from wardsoar.core.analyzer import _budget_for
+        from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
         sev1 = SuricataAlert(
             timestamp=datetime(2026, 4, 20, 0, 0, tzinfo=timezone.utc),
@@ -587,8 +587,8 @@ class TestPruneNetworkContext:
     spend tokens on them."""
 
     def test_drops_time_wait_and_close_wait(self) -> None:
-        from src.analyzer import _prune_network_context
-        from src.models import NetworkContext
+        from wardsoar.core.analyzer import _prune_network_context
+        from wardsoar.core.models import NetworkContext
 
         ctx = NetworkContext(
             active_connections=[
@@ -609,8 +609,8 @@ class TestPruneNetworkContext:
 
     def test_keeps_connections_with_missing_state(self) -> None:
         """Some collectors omit ``state`` for UDP — we keep them."""
-        from src.analyzer import _prune_network_context
-        from src.models import NetworkContext
+        from wardsoar.core.analyzer import _prune_network_context
+        from wardsoar.core.models import NetworkContext
 
         ctx = NetworkContext(
             active_connections=[
@@ -622,8 +622,8 @@ class TestPruneNetworkContext:
         assert len(pruned.active_connections) == 2
 
     def test_dns_cache_is_capped(self) -> None:
-        from src.analyzer import _prune_network_context
-        from src.models import NetworkContext
+        from wardsoar.core.analyzer import _prune_network_context
+        from wardsoar.core.models import NetworkContext
 
         ctx = NetworkContext(
             dns_cache=[{"host": f"h{i}.example.", "ip": "10.0.0.1"} for i in range(50)]
@@ -634,8 +634,8 @@ class TestPruneNetworkContext:
         assert pruned.dns_cache[-1]["host"] == "h49.example."
 
     def test_arp_and_reputation_preserved(self) -> None:
-        from src.analyzer import _prune_network_context
-        from src.models import IPReputation, NetworkContext
+        from wardsoar.core.analyzer import _prune_network_context
+        from wardsoar.core.models import IPReputation, NetworkContext
 
         ctx = NetworkContext(
             arp_cache=[{"ip": "10.0.0.1", "mac": "aa:bb:cc:dd:ee:ff"}],
@@ -654,8 +654,8 @@ class TestPruneForensicResult:
         return datetime(2026, 4, 20, 19, 0, 0, tzinfo=timezone.utc)
 
     def test_drops_sysmon_events_older_than_five_minutes(self) -> None:
-        from src.analyzer import _prune_forensic_result
-        from src.models import ForensicResult, SysmonEvent
+        from wardsoar.core.analyzer import _prune_forensic_result
+        from wardsoar.core.models import ForensicResult, SysmonEvent
 
         at = self._alert_time()
         old = SysmonEvent(event_id=1, timestamp=at - timedelta(hours=1), description="old")
@@ -669,8 +669,8 @@ class TestPruneForensicResult:
     def test_keeps_sysmon_events_without_timestamp_when_alert_time_missing(self) -> None:
         """Fail-open: no alert time means we cannot reason about
         recency, so we keep everything (capped only by list size)."""
-        from src.analyzer import _prune_forensic_result, _MAX_WINDOWS_EVENTS
-        from src.models import ForensicResult, SysmonEvent
+        from wardsoar.core.analyzer import _prune_forensic_result, _MAX_WINDOWS_EVENTS
+        from wardsoar.core.models import ForensicResult, SysmonEvent
 
         events = [
             SysmonEvent(
@@ -685,8 +685,8 @@ class TestPruneForensicResult:
         assert len(pruned.sysmon_events) == _MAX_WINDOWS_EVENTS
 
     def test_windows_events_timestamp_filtering(self) -> None:
-        from src.analyzer import _prune_forensic_result
-        from src.models import ForensicResult
+        from wardsoar.core.analyzer import _prune_forensic_result
+        from wardsoar.core.models import ForensicResult
 
         at = self._alert_time()
         fr = ForensicResult(
@@ -708,8 +708,8 @@ class TestPruneForensicResult:
         """Operator-provided alert timestamps sometimes arrive naive.
         We must still filter correctly rather than silently keeping
         everything."""
-        from src.analyzer import _prune_forensic_result
-        from src.models import ForensicResult, SysmonEvent
+        from wardsoar.core.analyzer import _prune_forensic_result
+        from wardsoar.core.models import ForensicResult, SysmonEvent
 
         at_naive = datetime(2026, 4, 20, 19, 0, 0)  # no tzinfo
         at_utc = at_naive.replace(tzinfo=timezone.utc)
@@ -723,8 +723,8 @@ class TestPruneForensicResult:
         assert pruned.sysmon_events == []  # old event still dropped
 
     def test_preserved_sections(self) -> None:
-        from src.analyzer import _prune_forensic_result
-        from src.models import ForensicResult
+        from wardsoar.core.analyzer import _prune_forensic_result
+        from wardsoar.core.models import ForensicResult
 
         fr = ForensicResult(
             suspect_processes=[{"pid": 1}],
@@ -744,7 +744,7 @@ class TestAsAwareUtc:
     — it must never crash on operator-provided strings."""
 
     def test_iso_with_z_suffix(self) -> None:
-        from src.analyzer import _as_aware_utc
+        from wardsoar.core.analyzer import _as_aware_utc
 
         result = _as_aware_utc("2026-04-20T19:00:00Z")
         assert result is not None
@@ -752,20 +752,20 @@ class TestAsAwareUtc:
         assert result.year == 2026
 
     def test_iso_with_offset(self) -> None:
-        from src.analyzer import _as_aware_utc
+        from wardsoar.core.analyzer import _as_aware_utc
 
         result = _as_aware_utc("2026-04-20T19:00:00+02:00")
         assert result is not None
 
     def test_naive_datetime_promoted_to_utc(self) -> None:
-        from src.analyzer import _as_aware_utc
+        from wardsoar.core.analyzer import _as_aware_utc
 
         result = _as_aware_utc(datetime(2026, 4, 20, 19, 0, 0))
         assert result is not None
         assert result.tzinfo is timezone.utc
 
     def test_garbage_returns_none(self) -> None:
-        from src.analyzer import _as_aware_utc
+        from wardsoar.core.analyzer import _as_aware_utc
 
         assert _as_aware_utc("not a date") is None
         assert _as_aware_utc("") is None
@@ -781,7 +781,7 @@ class TestAdaptiveBudgetEndToEnd:
     def _huge_context(self) -> tuple[NetworkContext, ForensicResult]:
         """Build a payload that would blow the 195 K token budget if
         serialised verbatim."""
-        from src.models import NetworkContext, ForensicResult, SysmonEvent
+        from wardsoar.core.models import NetworkContext, ForensicResult, SysmonEvent
 
         alert_time = datetime(2026, 4, 20, 19, 0, 0, tzinfo=timezone.utc)
         ctx = NetworkContext(
@@ -804,8 +804,8 @@ class TestAdaptiveBudgetEndToEnd:
         return ctx, fr
 
     def test_sev1_prompt_is_larger_than_sev3(self) -> None:
-        from src.analyzer import ThreatAnalyzer
-        from src.models import SuricataAlert, SuricataAlertSeverity
+        from wardsoar.core.analyzer import ThreatAnalyzer
+        from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
@@ -833,8 +833,8 @@ class TestAdaptiveBudgetEndToEnd:
     def test_sev3_prompt_is_bounded(self) -> None:
         """A flood of connections and events must not produce a huge
         prompt on SEV-3."""
-        from src.analyzer import ThreatAnalyzer
-        from src.models import SuricataAlert, SuricataAlertSeverity
+        from wardsoar.core.analyzer import ThreatAnalyzer
+        from wardsoar.core.models import SuricataAlert, SuricataAlertSeverity
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})
@@ -860,8 +860,8 @@ class TestAdaptiveBudgetEndToEnd:
 
     def test_pruning_removes_time_wait_before_budget(self) -> None:
         """Dead connections must not eat into the budget."""
-        from src.analyzer import ThreatAnalyzer
-        from src.models import NetworkContext, SuricataAlert, SuricataAlertSeverity
+        from wardsoar.core.analyzer import ThreatAnalyzer
+        from wardsoar.core.models import NetworkContext, SuricataAlert, SuricataAlertSeverity
 
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             analyzer = ThreatAnalyzer({})

@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models import VirusTotalResult
-from src.virustotal import VirusTotalClient
+from wardsoar.core.models import VirusTotalResult
+from wardsoar.core.virustotal import VirusTotalClient
 
 # ---------------------------------------------------------------------------
 # Init tests
@@ -95,7 +95,7 @@ class TestLookupHash:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True})
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {
@@ -127,7 +127,7 @@ class TestLookupHash:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True})
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             mock_response = MagicMock()
             mock_response.status_code = 404
             mock_client = AsyncMock()
@@ -144,7 +144,7 @@ class TestLookupHash:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True})
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -273,7 +273,7 @@ class TestCacheIntegration:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True}, cache=stub)  # type: ignore[arg-type]
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             result = await client.lookup_hash("h" * 64)
 
         assert result is not None
@@ -290,7 +290,7 @@ class TestCacheIntegration:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True}, cache=stub)  # type: ignore[arg-type]
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             result = await client.lookup_hash("z" * 64)
 
         assert result is None
@@ -304,7 +304,7 @@ class TestCacheIntegration:
         with patch.dict(os.environ, {"VIRUSTOTAL_API_KEY": "test-key"}):
             client = VirusTotalClient({"enabled": True}, cache=stub)  # type: ignore[arg-type]
 
-        with patch("src.virustotal.httpx") as mock_httpx:
+        with patch("wardsoar.core.virustotal.httpx") as mock_httpx:
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.json.return_value = {

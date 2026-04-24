@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from src.ip_enrichment import (
+from wardsoar.core.ip_enrichment import (
     IpEnrichment,
     WardsoarHistory,
     build_ip_enrichment,

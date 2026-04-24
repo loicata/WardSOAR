@@ -54,6 +54,20 @@ mypy_path = [
 # explicit_package_bases to coexist with multiple src trees.
 explicit_package_bases = true
 namespace_packages = true
+# Skip runtime directories that may land inside packages/ before the
+# get_data_dir() fix takes effect (sealed by icacls → unreadable by
+# mypy's filesystem scan). These dirs are gitignored but remain on
+# disk and would crash ``mypy --strict`` with WinError 5.
+exclude = [
+    "evidence/",
+    "data/",
+    "intel_feeds/",
+    "logs/",
+    "reports/",
+    "snapshots/",
+    "netgate_backups/",
+    "tmp/",
+]
 
 [[tool.mypy.overrides]]
 module = "qfluentwidgets.*"

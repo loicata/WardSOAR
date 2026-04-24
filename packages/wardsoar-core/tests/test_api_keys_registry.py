@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from src.api_keys_registry import (
+from wardsoar.core.api_keys_registry import (
     API_KEY_SPECS,
     AUTO_ENABLED_SOURCES,
     MANUAL_CHECKS,

@@ -2,8 +2,8 @@
 
 Two surfaces:
 
-* :class:`src.cdn_allowlist.CdnAllowlist` — YAML loader + ASN lookup.
-* :class:`src.responder.ThreatResponder` — the Hard-Protect bypass
+* :class:`wardsoar.core.cdn_allowlist.CdnAllowlist` — YAML loader + ASN lookup.
+* :class:`wardsoar.core.responder.ThreatResponder` — the Hard-Protect bypass
   that swaps to Protect semantics when the source IP's ASN matches
   the allowlist. Verified both as a policy (BENIGN low-conf now
   passes) and as a safety check (CONFIRMED still blocks even on a
@@ -21,10 +21,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.asn_enricher import AsnInfo
-from src.cdn_allowlist import CdnAllowlist, CdnMatch
-from src.config import WhitelistConfig
-from src.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict
+from wardsoar.core.asn_enricher import AsnInfo
+from wardsoar.core.cdn_allowlist import CdnAllowlist, CdnMatch
+from wardsoar.core.config import WhitelistConfig
+from wardsoar.core.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict
 from src.pfsense_ssh import BlockTracker, PfSenseSSH
 from src.responder import ThreatResponder
 
