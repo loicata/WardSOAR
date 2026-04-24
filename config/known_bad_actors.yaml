@@ -1,0 +1,60 @@
+# Known adversary IOCs — direct block scoring (Phase 4.6).
+#
+# An entry here carries a weight large enough to put an alert straight
+# over the PreScorer threshold (default 30) without needing any other
+# signal. That forces Opus to adjudicate every contact with a known
+# adversary and, when the dry-run toggle is off, triggers a block +
+# forensic quick acquisition automatically.
+#
+# Scope: this file holds ONLY the technical IOCs WardSOAR can act on.
+# Personal contact details (email, phone, IBAN, postal address) live in
+# the operator's legal / forensic case file, not in the product — those
+# do not surface on the wire.
+#
+# Edit + restart WardSOAR to apply changes. A warning is logged for
+# every match so that a known-actor contact is visible in the trace
+# immediately, even before the pipeline reaches Opus.
+
+schema_version: "1"
+
+actors:
+  - id: "VINE-2025-001"
+    name: "Ben Hutchinson (ex Vine Fibre Communications)"
+    weight: 100          # single match crosses the threshold and triggers analysis
+    reason: >-
+      Confirmed adversary per forensic report VINE-2025-001 (Cloughjordan).
+      Unlikely to reuse the VINE IP directly — doing so would trivially
+      trace back to him as the network administrator. These entries exist
+      as an "operational-security slip" safety net: if he ever does it,
+      we catch it immediately. His probable real vector is anonymous UK
+      hosting (see config/suspect_asns.yaml priority_countries: ["GB"]).
+
+    # Public IPs / CIDR blocks associated with the adversary's known
+    # infrastructure. Add lines as new evidence surfaces.
+    ips:
+      - "84.203.112.137"   # VINE public IP (Digiweb Ireland), per CSV server-side records
+
+    # Optional CIDR block list — a /24 around the primary IP catches
+    # Digiweb dynamic reassignments while staying specific enough not
+    # to blanket the whole Digiweb pool.
+    cidrs:
+      - "84.203.112.0/24"
+
+    # Domains the adversary is known to operate or control. A Suricata
+    # DNS alert for any of these triggers the same high score. Keep the
+    # list tight — a false positive here fires at weight 100.
+    domains: []
+    # hutchinson.work  # his personal domain — enable only if any traffic
+                       # to/from it is observed without a benign cause.
+                       # His email ben@hutchinson.work is NOT an IOC here
+                       # (we cannot see encrypted mail content on the wire).
+
+# ---------------------------------------------------------------------------
+# Operator note — primary vector (non-actionable, kept for situational awareness):
+#   - Actor: Ben Hutchinson (English; ex-employee of a UK networking
+#     company whose public trace has been scrubbed from the internet —
+#     itself a signal of OPSEC sophistication).
+#   - Most likely attack origin: UK-based anonymous VPS / VPN provider.
+#   - That vector is covered by config/suspect_asns.yaml (M247, Datacamp,
+#     Voxility, iomart, Clouvider…) with priority_country bonus on GB.
+# ---------------------------------------------------------------------------

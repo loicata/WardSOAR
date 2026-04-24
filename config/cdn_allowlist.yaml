@@ -1,0 +1,161 @@
+# WardSOAR CDN / major-SaaS allowlist (Phase 7e).
+#
+# In Hard Protect mode the Responder blocks ANY alert that Opus does
+# not adjudicate BENIGN with very high confidence (default 0.99).
+# That policy is correct for an adversary on an anonymous VPS, but
+# it produces painful false positives on legitimate CDN and SaaS
+# traffic: Opus routinely verdicts a Netflix TCP-retransmission
+# alert BENIGN 0.88, which in Hard Protect translates to "block
+# Netflix".
+#
+# The fix is the allowlist below: for any alert whose source IP
+# resolves to an ASN listed here, the Responder drops back to
+# Protect semantics (block only on CONFIRMED >= confidence threshold).
+# The allowlist is *not* a blanket immunity — a CDN can be compromised
+# and Opus can still demand a block — but it turns the asymmetric
+# probability ("this is probably benign Netflix") into an explicit
+# "unless proven threat, let it through".
+#
+# Scope rules for adding an entry:
+#   - Must be a CDN, streaming provider, or mainstream SaaS that
+#     legitimate home users interact with routinely.
+#   - Must NOT be a general-purpose datacenter where an attacker can
+#     rent a VPS anonymously (OVH, Hetzner, Scaleway, DigitalOcean,
+#     Vultr, Linode, Contabo, M247...). These stay fully gated by
+#     Hard Protect — they are Ben's likely attack vector.
+#   - Must NOT overlap with anonymisation infrastructure already
+#     listed in suspect_asns.yaml (Tor, VPN providers, residential
+#     proxies). If an ASN is in both files the suspect_asns list
+#     wins (the allowlist defers to it).
+#
+# Edit + restart WardSOAR to apply changes.
+
+schema_version: "1"
+
+allowlisted:
+
+  # ---- Global CDN networks ----
+  - asn: 13335
+    organisation: "Cloudflare"
+    category: "cdn"
+  - asn: 20940
+    organisation: "Akamai Technologies (AS20940)"
+    category: "cdn"
+  - asn: 16625
+    organisation: "Akamai Technologies (AS16625)"
+    category: "cdn"
+  - asn: 9009
+    organisation: "Akamai Technologies (London AS9009)"
+    category: "cdn"
+  - asn: 21342
+    organisation: "Akamai Technologies (AS21342)"
+    category: "cdn"
+  - asn: 54113
+    organisation: "Fastly"
+    category: "cdn"
+  - asn: 22822
+    organisation: "Limelight / Edgio"
+    category: "cdn"
+  - asn: 15133
+    organisation: "Edgecast / Verizon Digital Media"
+    category: "cdn"
+
+  # ---- Amazon CloudFront / AWS edges ----
+  # Note: AS16509 covers both CloudFront *and* EC2 rented VPS. We
+  # include it here because the vast majority of inbound AS16509 on a
+  # home network is CloudFront-served content from legitimate sites.
+  # An attacker on an EC2 VPS *will* therefore slip through Hard
+  # Protect -- acceptable tradeoff given Opus still has to return
+  # BENIGN-high-confidence for the fallback to spare the IP.
+  - asn: 16509
+    organisation: "Amazon CloudFront / AWS"
+    category: "cdn"
+  - asn: 14618
+    organisation: "Amazon AWS"
+    category: "cdn"
+
+  # ---- Streaming / entertainment ----
+  - asn: 2906
+    organisation: "Netflix Streaming Services"
+    category: "streaming"
+  - asn: 40027
+    organisation: "Netflix (secondary range)"
+    category: "streaming"
+  - asn: 46489
+    organisation: "Twitch Interactive"
+    category: "streaming"
+  - asn: 40244
+    organisation: "Spotify AB"
+    category: "streaming"
+  - asn: 8403
+    organisation: "Spotify"
+    category: "streaming"
+  - asn: 36459
+    organisation: "GitHub"
+    category: "saas"
+
+  # ---- Mainstream SaaS (hyperscalers) ----
+  - asn: 8075
+    organisation: "Microsoft"
+    category: "saas"
+  - asn: 8068
+    organisation: "Microsoft (regional)"
+    category: "saas"
+  - asn: 15169
+    organisation: "Google"
+    category: "saas"
+  - asn: 19527
+    organisation: "Google (secondary)"
+    category: "saas"
+  - asn: 714
+    organisation: "Apple"
+    category: "saas"
+  - asn: 6185
+    organisation: "Apple (AS6185)"
+    category: "saas"
+  - asn: 32934
+    organisation: "Meta / Facebook"
+    category: "saas"
+
+  # ---- Gaming platforms ----
+  - asn: 32590
+    organisation: "Valve (Steam)"
+    category: "platform"
+  - asn: 35629
+    organisation: "Sony PlayStation Network"
+    category: "platform"
+  - asn: 55293
+    organisation: "Nintendo (Americas)"
+    category: "platform"
+  - asn: 16509
+    organisation: "Amazon (also used by Signal, Discord backends)"
+    category: "platform"
+
+  # ---- Messaging / productivity ----
+  - asn: 49544
+    organisation: "Discord / i3D"
+    category: "saas"
+  - asn: 32475
+    organisation: "Zoom Communications"
+    category: "saas"
+  - asn: 14413
+    organisation: "LinkedIn"
+    category: "saas"
+  - asn: 13414
+    organisation: "Twitter / X"
+    category: "saas"
+
+# ---------------------------------------------------------------------------
+# Operator note -- trade-offs in scope:
+#
+# * AS16509 (Amazon) is listed twice intentionally: once under CDN
+#   (CloudFront) and once under platform (Signal, Discord). The
+#   registry dedupes at load time on asn; the first match wins.
+# * Facebook / Meta owns some IP space registered under transit
+#   providers (PCCW, Telia) -- those remain outside this list. If
+#   Opus verdicts a Telia-hosted fb.com IP BENIGN at 0.99 it still
+#   passes even without the allowlist.
+# * Google's quasi-random IP space is mostly under AS15169 but a
+#   few services (YouTube in some regions) use AS36040 / AS36384.
+#   Add them if you see Opus verdicts dropping on YouTube traffic.
+# ---------------------------------------------------------------------------

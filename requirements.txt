@@ -1,0 +1,21 @@
+# WardSOAR - Dependencies
+watchdog>=4.0.0          # File system monitoring (EVE JSON watcher)
+pydantic>=2.0.0          # Data validation and models
+httpx>=0.27.0            # Async HTTP client (pfSense API, IP reputation)
+python-dotenv>=1.0.0     # Environment variable management
+anthropic>=0.40.0        # Claude API client
+vt-py>=0.18.0            # VirusTotal API client
+yara-python>=4.5.0       # Local YARA rule matching (privacy-first cascade)
+reportlab>=4.0.0         # PDF generation for forensic reports
+Pillow>=10.0             # Required transitively by reportlab
+pyyaml>=6.0              # Configuration files
+psutil>=5.9.0            # Process and system monitoring
+asyncssh>=2.14.0         # SSH streaming from pfSense
+wmi>=1.5.1               # Windows Management Instrumentation
+pywin32>=306             # Windows API access (Event Logs, Services)
+# Native Windows desktop application — Fluent Design (Windows 11)
+PySide6>=6.7.0           # Qt6 for Python — GUI, system tray, toast notifications
+PySide6-Fluent-Widgets[full]>=1.7.0  # Windows 11 Fluent Design widgets
+# Notifications (optional channels)
+python-telegram-bot>=21.0  # Telegram bot API
+aiosmtplib>=3.0.0        # Async SMTP client

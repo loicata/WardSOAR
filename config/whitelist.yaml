@@ -1,0 +1,31 @@
+# WardSOAR - IP Whitelist
+# These IPs will NEVER be blocked, regardless of alert severity
+# WARNING: Removing entries from this list can cause service disruption
+
+# Infrastructure IPs - CRITICAL
+infrastructure:
+  - ip: "192.168.2.1"
+    description: "pfSense gateway / DNS resolver"
+  - ip: "192.168.2.100"
+    description: "WardSOAR PC"
+
+# DNS servers
+dns:
+  - ip: "1.1.1.1"
+    description: "Cloudflare DNS"
+  - ip: "1.0.0.1"
+    description: "Cloudflare DNS secondary"
+  - ip: "8.8.8.8"
+    description: "Google DNS"
+  - ip: "8.8.4.4"
+    description: "Google DNS secondary"
+
+# Trusted services (add your own)
+trusted:
+  # - ip: "x.x.x.x"
+  #   description: "Service name"
+
+# Entire subnets to whitelist (CIDR notation)
+subnets:
+  # - cidr: "10.0.0.0/8"
+  #   description: "Internal network"

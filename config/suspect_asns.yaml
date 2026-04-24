@@ -1,0 +1,119 @@
+# Suspect ASN registry — threat-actor-aware scoring
+#
+# An IP that is "clean" on AbuseIPDB / OTX can still be highly suspicious
+# if it belongs to an autonomous system whose main business is selling
+# anonymisation to whoever pays. This file is the seed list used by the
+# PreScorer's "anonymization_risk" factor (see src/prescorer.py +
+# src/asn_enricher.py).
+#
+# Categories carry a weight (points added to the score). One single
+# high-weight match puts the alert over the default 30 threshold, so
+# WardSOAR will hand it to Opus for a verdict instead of silently
+# dropping it.
+#
+# Curated for an operator whose threat model is a known adversary with
+# UK/Ireland infrastructure. Extend freely — unknown ASNs fall through
+# to weight 0.
+
+schema_version: "1"
+
+# Extra bonus added on top of the category weight when the ASN is
+# registered in one of these countries. Matches the specific adversary
+# profile we want to defend against.
+priority_countries: ["GB", "IE"]
+priority_country_bonus: 10
+
+categories:
+
+  # ----------------------------------------------------------------------
+  # Tor exit nodes — refreshed from check.torproject.org (see tor_exits.py).
+  # The category is kept here so the weight is tunable alongside the others.
+  # ----------------------------------------------------------------------
+  tor_exit:
+    weight: 40
+    asns: []   # populated dynamically; ASN list is not the source of truth
+
+  # ----------------------------------------------------------------------
+  # Commercial VPN providers and operators that host most of them. A hit
+  # here means an operator who SELLS anonymisation-as-a-service, not a
+  # datacenter that happens to have a VPN as one tenant.
+  # ----------------------------------------------------------------------
+  vpn_provider:
+    weight: 35
+    asns:
+      # United Kingdom — priority
+      - { asn: 9009,   name: "M247 Ltd",                        country: "GB" }  # Hosts ProtonVPN, Mullvad, PIA, Express, Surfshark
+      - { asn: 60068,  name: "Datacamp Ltd / CDN77",            country: "GB" }
+      - { asn: 39743,  name: "Voxility LLP",                    country: "GB" }
+      - { asn: 62240,  name: "Clouvider Limited",               country: "GB" }
+      - { asn: 20860,  name: "iomart Cloud Services",           country: "GB" }
+      - { asn: 206092, name: "Hydra Communications Ltd",        country: "GB" }
+      - { asn: 34549,  name: "Meerfarbig GmbH & Co. KG (UK)",   country: "GB" }
+      - { asn: 212238, name: "Datacamp Limited (Bright Data)",  country: "GB" }
+
+      # Ireland — priority
+      - { asn: 202425, name: "IP Volume Inc",                   country: "IE" }  # Offshore / bulletproof-ish
+      - { asn: 132203, name: "Tencent Europe Ltd",              country: "IE" }
+
+      # VPN vendors by their own ASN (wherever registered)
+      - { asn: 200651, name: "Mullvad VPN AB (31173 Services)", country: "SE" }
+      - { asn: 200044, name: "ProtonVPN",                       country: "CH" }
+      - { asn: 44103,  name: "Private Layer INC",               country: "CH" }
+      - { asn: 6233,   name: "Tefincom SA (NordVPN)",           country: "PA" }
+      - { asn: 212238, name: "Bright Data (ex Luminati)",       country: "IL" }
+
+      # Widespread datacenter providers heavily used by VPN/proxy tenants.
+      # Score lower via the vps_datacenter category below — keeping them
+      # here would over-fire on legitimate corporate traffic.
+
+  # ----------------------------------------------------------------------
+  # Residential-proxy providers — sell access through other people's home
+  # broadband. Used by scrapers and, critically, by targeted attackers to
+  # make callbacks look domestic.
+  # ----------------------------------------------------------------------
+  residential_proxy:
+    weight: 35
+    asns:
+      - { asn: 63949,  name: "Akamai Technologies (Luminati route)", country: "US" }
+      - { asn: 51852,  name: "Oxylabs",                         country: "LT" }
+      - { asn: 212238, name: "Bright Data Ltd",                 country: "IL" }
+      # Note: many residential proxies route through home ISPs whose own
+      # ASN is unremarkable. Detection there relies on behavioural signals
+      # (burst + outside-hours), not ASN alone.
+
+  # ----------------------------------------------------------------------
+  # UK/IE VPS providers popular for spinning up single-use attack boxes.
+  # Lower weight so legit corporate traffic doesn't trigger alone — but
+  # combined with any other score factor it crosses the threshold.
+  # ----------------------------------------------------------------------
+  vps_uk_ie:
+    weight: 25
+    asns:
+      - { asn: 29550,  name: "Simply Transit Ltd (Catalyst2)",  country: "GB" }
+      - { asn: 51561,  name: "Nybula LLC",                      country: "IE" }
+      - { asn: 25369,  name: "Hydra Communications",            country: "GB" }
+      - { asn: 29017,  name: "Gyron Internet Ltd",              country: "GB" }
+      - { asn: 12703,  name: "Pulsant Ltd",                     country: "GB" }
+      - { asn: 14987,  name: "Rise Broadband / Digiweb",        country: "IE" }
+      - { asn: 25504,  name: "Netsol Technologies (UK)",        country: "GB" }
+
+  # ----------------------------------------------------------------------
+  # Generic "cheap VPS" datacenters known to host throwaway attacker boxes.
+  # Kept at low weight because the same ASNs serve huge volumes of legit
+  # SaaS / hosting traffic.
+  # ----------------------------------------------------------------------
+  datacenter_generic:
+    weight: 15
+    asns:
+      - { asn: 14061,  name: "DigitalOcean",                    country: "US" }
+      - { asn: 20473,  name: "The Constant Company (Vultr)",    country: "US" }
+      - { asn: 63949,  name: "Akamai Technologies",             country: "US" }
+      - { asn: 16276,  name: "OVH SAS",                         country: "FR" }
+      - { asn: 24940,  name: "Hetzner Online GmbH",             country: "DE" }
+      - { asn: 213230, name: "Hetzner Online GmbH",             country: "DE" }
+      - { asn: 14618,  name: "Amazon AWS",                      country: "US" }
+      - { asn: 16509,  name: "Amazon AWS",                      country: "US" }
+      - { asn: 8075,   name: "Microsoft Azure",                 country: "US" }
+      - { asn: 15169,  name: "Google Cloud",                    country: "US" }
+      - { asn: 63018,  name: "Frantech Solutions (BuyVM)",      country: "US" }
+      - { asn: 26496,  name: "GoDaddy",                         country: "US" }

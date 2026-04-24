@@ -1,0 +1,92 @@
+# WardSOAR - Network Baseline
+# Defines known normal traffic patterns for this network.
+# Used by the Baseline module to help Claude distinguish normal from abnormal.
+#
+# HOW TO USE:
+# Document the traffic that is expected and legitimate on your network.
+# The Analyzer will receive this baseline as context to reduce false positives.
+# Update this file as your network evolves (new services, new servers, etc.).
+
+# Internal services — traffic to/from these is expected
+internal_services:
+  # - name: "Domain Controller"
+  #   ip: "192.168.1.10"
+  #   expected_ports: [53, 88, 389, 636, 445]
+  #   description: "Active Directory — DNS, Kerberos, LDAP, SMB"
+  #
+  # - name: "File Server"
+  #   ip: "192.168.1.20"
+  #   expected_ports: [445, 139]
+  #   description: "SMB file shares"
+  #
+  # - name: "Printer"
+  #   ip: "192.168.1.30"
+  #   expected_ports: [9100, 631]
+  #   description: "Network printer — RAW and IPP"
+
+# External services regularly contacted — outbound traffic to these is normal
+expected_external_destinations:
+  # Microsoft
+  - name: "Microsoft Update"
+    domains: ["*.windowsupdate.com", "*.microsoft.com", "*.msftconnecttest.com"]
+    ports: [80, 443]
+
+  # Cloud services
+  # - name: "Google Workspace"
+  #   domains: ["*.google.com", "*.googleapis.com", "*.gstatic.com"]
+  #   ports: [443]
+
+  # Security tools (don't block your own tools!)
+  - name: "VirusTotal"
+    domains: ["www.virustotal.com", "*.virustotal.com"]
+    ports: [443]
+
+  - name: "AbuseIPDB"
+    domains: ["api.abuseipdb.com"]
+    ports: [443]
+
+  - name: "Anthropic API"
+    domains: ["api.anthropic.com"]
+    ports: [443]
+
+# Common outbound ports that are expected from workstations
+expected_outbound_ports:
+  - port: 443
+    protocol: "TCP"
+    description: "HTTPS — normal web browsing and cloud services"
+  - port: 80
+    protocol: "TCP"
+    description: "HTTP — some update services still use this"
+  - port: 53
+    protocol: "UDP"
+    description: "DNS — queries to configured resolvers only"
+
+# Ports that should NEVER be seen in outbound traffic from workstations
+# Connections on these ports from a workstation are suspicious by nature
+suspicious_outbound_ports:
+  - port: 4444
+    description: "Common Metasploit/reverse shell default"
+  - port: 1234
+    description: "Common backdoor port"
+  - port: 5555
+    description: "Common RAT port"
+  - port: 8888
+    description: "Common C2 port"
+  - port: 6667
+    description: "IRC — often used for C2"
+  - port: 6697
+    description: "IRC over TLS — often used for C2"
+  - port: 25
+    description: "SMTP — workstations should not send email directly"
+  - port: 445
+    description: "SMB outbound to internet — never legitimate"
+  - port: 3389
+    description: "RDP outbound to internet — never legitimate"
+
+# Time-based patterns (optional)
+# traffic_schedule:
+#   business_hours:
+#     start: "08:00"
+#     end: "18:00"
+#     timezone: "Europe/Paris"
+#     note: "Traffic outside these hours from workstations is more suspicious"

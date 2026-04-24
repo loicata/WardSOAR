@@ -1,0 +1,165 @@
+# WardSOAR - Known False Positive Signatures
+# Suricata signature IDs that are known to trigger on legitimate traffic
+# in this specific network environment.
+#
+# HOW TO USE:
+# After running in dry-run mode, review the decision log.
+# When you identify a signature that consistently triggers on normal traffic,
+# add it here with a justification.
+#
+# CAUTION: Adding a signature here means it will NEVER be analyzed.
+# Review this list periodically — a signature that was a false positive
+# yesterday might detect a real attack tomorrow if your environment changes.
+
+# Format:
+# - signature_id: Suricata SID
+#   signature_name: human-readable name (for documentation only)
+#   reason: why this is a false positive in your environment
+#   added_date: when it was added
+#   review_date: when it should be re-evaluated
+
+suppressed_signatures:
+  # Example entries — uncomment and adapt to your environment:
+  #
+  # - signature_id: 2013028
+  #   signature_name: "ET POLICY GNU/Linux APT User-Agent Outbound likely related to package management"
+  #   reason: "Normal Ubuntu package manager traffic from internal servers"
+  #   added_date: "2026-01-01"
+  #   review_date: "2026-07-01"
+  #
+  # - signature_id: 2027863
+  #   signature_name: "ET INFO Observed DNS Query to .cloud TLD"
+  #   reason: "Legitimate cloud services used daily (Azure, AWS)"
+  #   added_date: "2026-01-01"
+  #   review_date: "2026-07-01"
+
+  - signature_id: 2200074
+    signature_name: "SURICATA TCPv4 invalid checksum"
+    reason: "False positive caused by ProtonVPN WireGuard tunnel — encapsulation causes TCP checksum recalculation mismatches"
+    added_date: "2026-04-07"
+    review_date: "2026-10-07"
+
+  # --- WardSOAR self-traffic (autocontamination) ---
+  # The following signatures fire on lookups WardSOAR itself issues for
+  # ASN enrichment (ipinfo.io) and Tor exit-list refresh (torproject.org).
+  # Suppressing them at Filter stage 1 keeps the pipeline from processing
+  # its own side-effects. Traceable in the code at:
+  #   - src/asn_enricher.py  → ipinfo.io
+  #   - src/suspect_asns.py  → check.torproject.org (TorExitFetcher)
+  # Re-evaluate if ipinfo.io is ever disabled / replaced.
+
+  - signature_id: 2025331
+    signature_name: "ET INFO Possible External IP Lookup Domain Observed in SNI (ipinfo.io)"
+    reason: "WardSOAR asn_enricher: TLS handshake to ipinfo.io for ASN/geo lookup"
+    added_date: "2026-04-20"
+    review_date: "2026-10-20"
+
+  - signature_id: 2054168
+    signature_name: "ET INFO External IP Lookup Domain in DNS Lookup (ipinfo.io)"
+    reason: "WardSOAR asn_enricher: DNS resolution for ipinfo.io lookup (precedes TLS)"
+    added_date: "2026-04-20"
+    review_date: "2026-10-20"
+
+  - signature_id: 2017928
+    signature_name: "ET INFO check.torproject.org IP lookup/Tor Usage check over TLS with SNI"
+    reason: "WardSOAR TorExitFetcher: TLS handshake to check.torproject.org for exit-list refresh"
+    added_date: "2026-04-20"
+    review_date: "2026-10-20"
+
+  - signature_id: 2017926
+    signature_name: "ET INFO External IP Lookup / Tor Checker Domain (check.torproject.org in DNS)"
+    reason: "WardSOAR TorExitFetcher: DNS resolution for check.torproject.org (precedes TLS)"
+    added_date: "2026-04-20"
+    review_date: "2026-10-20"
+
+  # --- Python ecosystem traffic (pip install / build toolchain) ---
+  # files.pythonhosted.org is the official PyPI CDN backend that
+  # serves every Python wheel / sdist downloaded by ``pip install``.
+  # ET Open's FILE_SHARING ruleset flags it generically (the same
+  # category covers Dropbox, Mega, etc.) but the domain is benign:
+  # every Python developer hits it dozens of times a day, and every
+  # CI/CD pipeline that installs Python deps does too.
+  # Observed 2026-04-22 on WardSOAR's own build machine (5 hits in
+  # one night during MSI rebuilds). Suppressing at stage 1 keeps
+  # these out of Opus entirely -- ~$0.03 saved per occurrence.
+
+  - signature_id: 2049201
+    signature_name: "ET FILE_SHARING File Hosting Service Domain Domain in DNS Lookup (files .pythonhosted .org)"
+    reason: "Benign pip install traffic -- files.pythonhosted.org is the official PyPI CDN backend that serves every Python wheel/sdist download"
+    added_date: "2026-04-22"
+    review_date: "2026-10-22"
+
+  - signature_id: 2049202
+    signature_name: "ET INFO Observed File Hosting Service Domain (files .pythonhosted .org in TLS SNI)"
+    reason: "Benign pip install traffic -- TLS handshake to files.pythonhosted.org (follows the 2049201 DNS lookup)"
+    added_date: "2026-04-22"
+    review_date: "2026-10-22"
+
+  # --- Suricata stream / protocol anomalies (observed production) ---
+  # Every signature below was identified from a real alert reaching
+  # Opus on the operator's Netgate 4200 + Suricata 7.0.11 between
+  # 2026-04-20 and 2026-04-21. They are TCP/SSH/protocol-layer
+  # anomalies that fire on any CDN load balancer, VPN tunnel or
+  # browser reconnect — not real attacks. Opus routinely verdicts
+  # them BENIGN 85-92%, below the Hard Protect 0.99 threshold; on
+  # 2026-04-20 22:59 one of them (SID 2210054) caused WardSOAR to
+  # block a Netflix CDN IP (AS2906 37.77.187.134) because Opus
+  # only managed 0.88 confidence. Suppressing these at stage 1 keeps
+  # them out of Opus entirely.
+  #
+  # NOTE on SID accuracy: earlier versions of this file shipped three
+  # SIDs that did not exist in ET Open (2210029, 2210007, 2210046) —
+  # presumed values never matched any real alert. They are replaced
+  # below by SIDs observed on-the-wire and cross-referenced against
+  # Suricata's built-in ``stream-events.rules`` (2210044, 2210054,
+  # 2210027).
+
+  - signature_id: 2210044
+    signature_name: "SURICATA STREAM Packet with invalid timestamp"
+    reason: "TCP timestamp mismatches from CDN/VPN/mobile carriers -- never attack payload"
+    added_date: "2026-04-21"
+    review_date: "2026-10-21"
+
+  - signature_id: 2210050
+    signature_name: "SURICATA STREAM reassembly overlap with different data"
+    reason: "Common in asymmetric-routing or VPN-wrapped flows, not attack-indicative"
+    added_date: "2026-04-20"
+    review_date: "2026-10-20"
+
+  - signature_id: 2210054
+    signature_name: "SURICATA STREAM excessive retransmissions"
+    reason: "Mobile/VPN connectivity artefacts; fires on Netflix CDN retries, Firefox downloads"
+    added_date: "2026-04-21"
+    review_date: "2026-10-21"
+
+  - signature_id: 2210027
+    signature_name: "SURICATA STREAM TIME_WAIT ACK with wrong seq"
+    reason: "NAT / stateful-firewall timing artefacts on long-lived CDN connections"
+    added_date: "2026-04-21"
+    review_date: "2026-10-21"
+
+  - signature_id: 2228000
+    signature_name: "SURICATA SSH invalid banner"
+    reason: "Non-standard but benign SSH banners from managed services and bastion hosts"
+    added_date: "2026-04-21"
+    review_date: "2026-10-21"
+
+  - signature_id: 2260002
+    signature_name: "SURICATA Applayer Detect protocol only one direction"
+    reason: "Fires on short-lived HTTPS probes and VPN keepalives where one side never responds"
+    added_date: "2026-04-21"
+    review_date: "2026-10-21"
+
+# Entire Suricata categories to suppress (use with extreme caution)
+suppressed_categories:
+  # - category: "Not Suspicious Traffic"
+  #   reason: "Low-value informational alerts"
+
+# Suppress alerts for specific (signature_id + dest_ip) combinations
+# Use when a signature is valid generally but false-positive for a specific destination
+suppressed_pairs:
+  # - signature_id: 2024897
+  #   dest_ip: "13.107.42.14"
+  #   reason: "Microsoft Office telemetry — normal for our Office 365 deployment"
+  #   added_date: "2026-01-01"
+  #   review_date: "2026-07-01"

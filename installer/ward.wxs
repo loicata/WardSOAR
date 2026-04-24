@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+  WardSOAR MSI Installer — WiX v4+
+
+  Packages the PyInstaller output (dist/WardSOAR/) into a
+  professional MSI installer compatible with enterprise deployment
+  (GPO, Intune, SCCM, silent install).
+
+  Build with: wix build installer\ward.wxs -ext WixToolset.UI.wixext -o dist\WardSOAR.msi
+-->
+
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="WardSOAR"
+           Manufacturer="Loic Ader"
+           Version="0.22.7"
+           UpgradeCode="7B2E5F4A-1C3D-4E8F-A9B0-6D7E8F9A0B1C"
+           Scope="perMachine"
+           Language="1033"
+           Codepage="1252">
+
+    <!-- Upgrade handling: remove previous versions before install -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of WardSOAR is already installed."
+                  AllowSameVersionUpgrades="yes" />
+
+    <!-- Embed all files in the MSI (no external cab) -->
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- UI: minimal wizard (license + install path) -->
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <!-- License file (resolved relative to this .wxs file) -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)license.rtf" />
+
+    <!-- ==================== Directory Structure ==================== -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="WardSOAR">
+        <Directory Id="InternalDir" Name="_internal" />
+        <Directory Id="ConfigDir" Name="config">
+          <Directory Id="PromptsDir" Name="prompts" />
+        </Directory>
+        <Directory Id="DataDir" Name="data">
+          <Directory Id="LogsDir" Name="logs" />
+        </Directory>
+        <Directory Id="SnapshotsDir" Name="snapshots" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start Menu shortcut directory -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppMenuFolder" Name="WardSOAR" />
+    </StandardDirectory>
+
+    <!-- Desktop shortcut directory -->
+    <StandardDirectory Id="DesktopFolder" />
+
+    <!-- ==================== Components ==================== -->
+
+    <!-- Main executable -->
+    <ComponentGroup Id="MainExe" Directory="INSTALLFOLDER">
+      <Component Id="WardExe" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <File Id="WardSOAR.exe"
+              Source="dist\WardSOAR\WardSOAR.exe"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- All files from _internal/ (PyInstaller bundled dependencies) -->
+    <ComponentGroup Id="InternalFiles" Directory="InternalDir">
+      <Files Include="$(sys.SOURCEFILEDIR)..\dist\WardSOAR\_internal\**" />
+    </ComponentGroup>
+
+    <!-- Config directory (app creates default config.yaml on first launch via load_config()) -->
+    <ComponentGroup Id="ConfigFiles">
+      <Component Id="ConfigDirComp" Directory="ConfigDir"
+                 Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+        <CreateFolder />
+      </Component>
+      <Component Id="PromptsDirComp" Directory="PromptsDir"
+                 Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678902">
+        <CreateFolder />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Empty directories for data and snapshots -->
+    <ComponentGroup Id="EmptyDirs">
+      <Component Id="DataDirComp" Directory="DataDir"
+                 Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+        <CreateFolder />
+      </Component>
+      <Component Id="LogsDirComp" Directory="LogsDir"
+                 Guid="D4E5F6A7-B8C9-0123-DEF0-1234567890AB">
+        <CreateFolder />
+      </Component>
+      <Component Id="SnapshotsDirComp" Directory="SnapshotsDir"
+                 Guid="E5F6A7B8-C9D0-1234-EF01-234567890ABC">
+        <CreateFolder />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Shortcuts -->
+    <ComponentGroup Id="Shortcuts">
+      <!-- Start Menu -->
+      <Component Id="StartMenuShortcut" Directory="AppMenuFolder"
+                 Guid="F6A7B8C9-D0E1-2345-F012-3456789ABCDE">
+        <Shortcut Id="StartMenuLink"
+                  Name="WardSOAR"
+                  Target="[INSTALLFOLDER]WardSOAR.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon" />
+        <RemoveFolder Id="RemoveAppMenuFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\loicata\WardSOAR"
+                       Name="StartMenuShortcut"
+                       Type="integer" Value="1"
+                       KeyPath="yes" />
+      </Component>
+
+      <!-- Desktop -->
+      <Component Id="DesktopShortcut" Directory="DesktopFolder"
+                 Guid="A7B8C9D0-E1F2-3456-0123-456789ABCDEF">
+        <Shortcut Id="DesktopLink"
+                  Name="WardSOAR"
+                  Target="[INSTALLFOLDER]WardSOAR.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="AppIcon" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\loicata\WardSOAR"
+                       Name="DesktopShortcut"
+                       Type="integer" Value="1"
+                       KeyPath="yes" />
+      </Component>
+
+      <!--
+        Auto-start at user login via the HKCU Run key.
+
+        Rationale: the pipeline must be running whenever Suricata emits an
+        alert; otherwise events are missed. A Run-key entry is the Windows-
+        native way to launch a user-scoped GUI app at login, works without
+        admin rights at runtime, and is honoured by every Windows version
+        the app supports. Users who disable it do so via Task Manager →
+        Startup like any other app.
+      -->
+      <Component Id="AutoStartRunKey" Directory="INSTALLFOLDER"
+                 Guid="B8C9D0E1-F2A3-4567-89AB-CDEF01234567">
+        <RegistryValue Root="HKCU"
+                       Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="WardSOAR"
+                       Type="string"
+                       Value="&quot;[INSTALLFOLDER]WardSOAR.exe&quot;"
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Icon for Add/Remove Programs -->
+    <Icon Id="AppIcon" SourceFile="src\ui\assets\ward.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/loicata/WardSOAR" />
+
+    <!-- ==================== Feature ==================== -->
+    <Feature Id="Complete" Title="WardSOAR" Level="1">
+      <ComponentGroupRef Id="MainExe" />
+      <ComponentGroupRef Id="InternalFiles" />
+      <ComponentGroupRef Id="ConfigFiles" />
+      <ComponentGroupRef Id="EmptyDirs" />
+      <ComponentGroupRef Id="Shortcuts" />
+    </Feature>
+
+    <!--
+      ==================== Post-install launch ====================
+      Fire-and-forget CustomAction scheduled after InstallFinalize so
+      WardSOAR starts automatically as soon as the MSI finishes (no
+      extra click on the shortcut required). Couple of safety rails:
+
+        * ``Return="asyncNoWait"`` — the installer does NOT wait for
+          WardSOAR to exit; the MSI completes while the pipeline
+          starts up in the background.
+        * ``Impersonate="yes"`` — runs under the account of the user
+          who launched the install, not SYSTEM, so the UI lands in
+          the operator's desktop session (Windows Session 0 isolation
+          would otherwise hide it).
+        * ``Condition="NOT Installed"`` — first install + MajorUpgrade
+          both evaluate true; pure repair / modify does not re-launch.
+
+      If the operator already had WardSOAR running when the MSI
+      started, the MajorUpgrade flow killed it before copying the
+      new files (Windows Installer handles the file-in-use dialog);
+      this CA then resurrects it with the fresh binaries.
+    -->
+    <CustomAction Id="LaunchWardSOAR"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand='"[INSTALLFOLDER]WardSOAR.exe"'
+                  Return="asyncNoWait"
+                  Impersonate="yes" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchWardSOAR"
+              After="InstallFinalize"
+              Condition="NOT Installed" />
+    </InstallExecuteSequence>
+
+  </Package>
+</Wix>
