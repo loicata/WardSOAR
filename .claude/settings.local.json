@@ -658,7 +658,13 @@
       "PowerShell(.\\\\scripts\\\\build.ps1 2>&1)",
       "Bash(grep -n \"src\\\\\\\\\\\\\\\\ui\\\\\\\\\\\\\\\\assets\\\\\\\\\\\\\\\\ward.ico\\\\|src/ui/assets/ward.ico\\\\|ward\\\\.ico\" scripts/build.ps1)",
       "Bash(grep -n \"src.ui.assets\\\\|src\\\\\\\\\\\\\\\\ui\\\\\\\\\\\\\\\\assets\" installer/ward.wxs)",
-      "Bash(certutil -hashfile \"dist/WardSOAR_0.22.7.msi\" SHA256)"
+      "Bash(certutil -hashfile \"dist/WardSOAR_0.22.7.msi\" SHA256)",
+      "Bash(grep -rnE 'C:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\|%APPDATA%|%SYSTEMROOT%' packages/wardsoar-core/src/)",
+      "Bash(awk '/2026-04-24T13:50:24/,EOF' \"C:/Users/loica/AppData/Roaming/WardSOAR/logs/ward_soar.log\")",
+      "Bash(grep -oP '\"message\": \"[^\"]{0,150}')",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ packages/wardsoar-pc/tests/)",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/ packages/wardsoar-pc/src/wardsoar/pc/single_instance.py packages/wardsoar-pc/src/wardsoar/pc/ui/ssh_streamer.py packages/wardsoar-pc/src/wardsoar/pc/ui/app.py)",
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/)"
     ]
   }
 }

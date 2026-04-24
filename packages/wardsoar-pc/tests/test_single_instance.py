@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from wardsoar.core.single_instance import SingleInstanceGuard, activate_existing_window
+from wardsoar.pc.single_instance import SingleInstanceGuard, activate_existing_window
 
 
 def _fresh_name() -> str:

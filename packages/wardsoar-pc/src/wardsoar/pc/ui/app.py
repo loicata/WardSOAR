@@ -44,7 +44,7 @@ from qfluentwidgets import (
 
 from wardsoar.core.config import get_app_dir, get_data_dir, load_config, load_env, load_whitelist
 from wardsoar.pc.main import Pipeline
-from wardsoar.core.remote_agents.ssh_streamer import SshStreamer
+from wardsoar.pc.ui.ssh_streamer import SshStreamer
 from wardsoar.pc.ui.engine_bridge import EngineWorker
 from wardsoar.pc.ui.views.activity_view import ActivityView
 from wardsoar.pc.ui.views.alerts import AlertsView
@@ -398,7 +398,7 @@ class WardApp:
         # must stay alive for the lifetime of the process, hence the
         # self-reference on ``self``. See src/single_instance.py for
         # the fail-open semantics when pywin32 is not installed.
-        from wardsoar.core.single_instance import SingleInstanceGuard, activate_existing_window
+        from wardsoar.pc.single_instance import SingleInstanceGuard, activate_existing_window
 
         self._single_instance_guard = SingleInstanceGuard()
         if self._single_instance_guard.already_running():

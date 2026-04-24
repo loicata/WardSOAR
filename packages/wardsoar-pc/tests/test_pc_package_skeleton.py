@@ -12,7 +12,11 @@ import pytest
 def test_import_package() -> None:
     from wardsoar import pc
 
-    assert pc.__version__ == "0.0.1"
+    # Version bumped from the 0.0.1 skeleton placeholder once the
+    # Phase 1/2 migration landed real code; the pc package now
+    # carries the MSI-shipping version read by installer/ward.wxs.
+    assert pc.__version__
+    assert pc.__version__.count(".") >= 2  # semver-ish
 
 
 @pytest.mark.skipif(os.name != "nt", reason="wardsoar-pc only meaningful on Windows")
