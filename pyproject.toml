@@ -42,6 +42,18 @@ line-length = 100
 
 [tool.mypy]
 strict = true
+# Teach mypy about the monorepo packages so ``wardsoar.core.*``
+# imports resolve the same way they do at runtime (after the
+# editable install). Each package's src/ becomes a search root.
+mypy_path = [
+    "packages/wardsoar-core/src",
+    "packages/wardsoar-pc/src",
+    "packages/wardsoar-virus-sniff/src",
+]
+# PEP 420 namespace packages (``wardsoar`` has no __init__.py) need
+# explicit_package_bases to coexist with multiple src trees.
+explicit_package_bases = true
+namespace_packages = true
 
 [[tool.mypy.overrides]]
 module = "qfluentwidgets.*"

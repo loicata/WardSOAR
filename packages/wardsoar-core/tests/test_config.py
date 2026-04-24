@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.config import (
+from wardsoar.core.config import (
     AppConfig,
     WhitelistConfig,
     load_config,

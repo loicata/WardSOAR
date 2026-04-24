@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from src.logger import JSONFormatter, log_decision, setup_logging
-from src.models import (
+from wardsoar.core.logger import JSONFormatter, log_decision, setup_logging
+from wardsoar.core.models import (
     DecisionRecord,
     SuricataAlert,
     SuricataAlertSeverity,

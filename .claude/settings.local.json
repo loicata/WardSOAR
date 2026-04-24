@@ -572,7 +572,23 @@
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests -q)",
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests -q)",
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-virus-sniff/tests -q)",
-      "Bash(.venv/Scripts/python.exe -m pytest tests -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests -q)",
+      "Bash(rm tests/test_models.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(cp tests/test_config.py packages/wardsoar-core/tests/test_config.py)",
+      "Bash(sed -i 's|^from src\\\\.config import|from wardsoar.core.config import|g; s|^import src\\\\.config|import wardsoar.core.config|g; s|src\\\\.config\\\\.|wardsoar.core.config.|g' packages/wardsoar-core/tests/test_config.py)",
+      "Bash(rm tests/test_config.py)",
+      "Bash(cp tests/test_logger.py packages/wardsoar-core/tests/test_logger.py)",
+      "Bash(sed -i 's|^from src\\\\.logger import|from wardsoar.core.logger import|g; s|^from src\\\\.models import|from wardsoar.core.models import|g; s|^import src\\\\.logger|import wardsoar.core.logger|g; s|src\\\\.logger\\\\.|wardsoar.core.logger.|g' packages/wardsoar-core/tests/test_logger.py)",
+      "Bash(rm tests/test_logger.py)",
+      "Bash(.venv/Scripts/python.exe -c \"from src.models import SuricataAlert; from src.config import AppConfig; from src.logger import JSONFormatter; print\\('shims OK:', SuricataAlert.__module__, AppConfig.__module__, JSONFormatter.__module__\\)\")",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 src/models.py src/config.py src/logger.py packages/wardsoar-core/src/wardsoar/core/ packages/wardsoar-core/tests/)",
+      "Bash(.venv/Scripts/python.exe -m ruff check src/models.py src/config.py src/logger.py packages/wardsoar-core/src/ packages/wardsoar-core/tests/)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict src/models.py src/config.py src/logger.py)",
+      "Bash(.venv/Scripts/python.exe -m bandit -ll packages/wardsoar-core/src/wardsoar/core/)"
     ]
   }
 }

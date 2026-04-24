@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from src.models import (
+from wardsoar.core.models import (
     BlockAction,
     DecisionRecord,
     ForensicResult,
