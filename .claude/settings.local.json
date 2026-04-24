@@ -608,7 +608,22 @@
       "Bash(.venv/Scripts/python.exe -m black --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_netgate_apply.py -q)",
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/)",
-      "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-core/src/)"
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-core/src/)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_forensics.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_forensics.py::TestFindSuspiciousFilesFilters::test_filters_by_app_exclusion -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_svchost_resolver.py -q)",
+      "Bash(sed -i 's|^\\\\\\(.*\\\\\\)from src import \\\\\\(.*\\\\\\)$|\\\\1from wardsoar.pc import \\\\2|g' packages/wardsoar-pc/src/wardsoar/pc/healthcheck.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_sysmon_installer.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_sysmon_installer.py packages/wardsoar-pc/tests/test_process_risk.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_process_risk.py::TestCheckSignature::test_parses_valid_json -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_process_risk.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/test_main.py -q)",
+      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.pc.process_snapshot_buffer import attach_buffer_to_analyzer; print\\('direct OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -c \"from src.process_snapshot_buffer import attach_buffer_to_analyzer; print\\('shim OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/wardsoar/pc/)",
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-pc/src/)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-pc/src/wardsoar/pc/)"
     ]
   }
 }

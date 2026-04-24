@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.process_risk import (
+from wardsoar.pc.process_risk import (
     ProcessRiskResult,
     VERDICT_BENIGN,
     VERDICT_MALICIOUS,
@@ -134,14 +134,14 @@ def _mock_process(
         proc.parent.return_value = parent
     else:
         proc.parent.return_value = None
-    monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+    monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
 
 
 def _stub_signature(
     monkeypatch: pytest.MonkeyPatch, status: str = "valid", signer: str = "Microsoft Corporation"
 ) -> None:
     monkeypatch.setattr(
-        "src.process_risk._check_signature",
+        "wardsoar.pc.process_risk._check_signature",
         lambda path: (status, signer),
     )
 
@@ -244,7 +244,7 @@ class TestAgeSignal:
         proc.parent.return_value = None
         proc.parents.return_value = []
         proc.create_time.return_value = _time.time() - 60  # 1 min ago
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
 
         result = scan_process(1111)
 
@@ -260,7 +260,7 @@ class TestAgeSignal:
         proc.parent.return_value = None
         proc.parents.return_value = []
         proc.create_time.return_value = _time.time() - 48 * 3600  # 48 h ago
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
         _stub_signature(monkeypatch, "valid", "Microsoft Corporation")
 
         result = scan_process(2222)
@@ -293,7 +293,7 @@ class TestTreeDepthSignal:
         proc.parent.return_value = parents[0]
         proc.parents.return_value = parents
         proc.create_time.return_value = 0.0
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
         _stub_signature(monkeypatch, "valid", "Microsoft Corporation")
 
         result = scan_process(3333)
@@ -307,7 +307,7 @@ class TestDefenderSignal:
     def test_defender_hit_marks_malicious(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         # Fake a binary on disk + point MPCMDRUN at it too (valid file).
         exe = tmp_path / "payload.exe"  # type: ignore[attr-defined]
@@ -343,7 +343,7 @@ class TestDefenderSignal:
     def test_defender_clean_lowers_score(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         exe = tmp_path / "clean.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"clean bytes")
@@ -371,7 +371,7 @@ class TestDefenderSignal:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
         """Microsoft-signed binaries should not even be scanned."""
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         exe = tmp_path / "notepad.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"any")
@@ -408,7 +408,7 @@ class TestDllLoadsetSignal:
         return entry
 
     def test_dll_from_temp_adds_signal(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         proc = MagicMock()
         proc.name.return_value = "chrome.exe"
@@ -421,7 +421,7 @@ class TestDllLoadsetSignal:
             self._make_map(r"C:\Windows\System32\ntdll.dll"),
             self._make_map(r"C:\Users\loic\AppData\Local\Temp\rogue.dll"),
         ]
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
         _stub_signature(monkeypatch, "valid", "Google LLC")
         monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
         monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
@@ -432,7 +432,7 @@ class TestDllLoadsetSignal:
         assert any("Suspicious DLL" in s and "rogue.dll" in s for s in result.signals)
 
     def test_only_system_dlls_no_signal(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         proc = MagicMock()
         proc.name.return_value = "chrome.exe"
@@ -445,7 +445,7 @@ class TestDllLoadsetSignal:
             self._make_map(r"C:\Windows\System32\ntdll.dll"),
             self._make_map(r"C:\Program Files\Google\chrome.dll"),
         ]
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
         _stub_signature(monkeypatch, "valid", "Google LLC")
         monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
         monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
@@ -459,7 +459,7 @@ class TestDllLoadsetSignal:
         """``AccessDenied`` on memory_maps must not propagate."""
         from psutil import AccessDenied
 
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         proc = MagicMock()
         proc.name.return_value = "protected.exe"
@@ -469,7 +469,7 @@ class TestDllLoadsetSignal:
         proc.parents.return_value = []
         proc.create_time.return_value = 0.0
         proc.memory_maps.side_effect = AccessDenied("protected")
-        monkeypatch.setattr("src.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
         _stub_signature(monkeypatch, "valid", "Microsoft Corporation")
         monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
         monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
@@ -486,7 +486,7 @@ class TestYaraSignal:
     def test_matching_rule_adds_signal(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         exe = tmp_path / "infected.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"any bytes")
@@ -518,7 +518,7 @@ class TestYaraSignal:
         assert any("YARA match" in s and "Mal_EmotetLoader" in s for s in result.signals)
 
     def test_no_rules_no_signal(self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object") -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         exe = tmp_path / "benign.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"bytes")
@@ -542,7 +542,7 @@ class TestYaraSignal:
     def test_multiple_matches_capped_at_60(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src import process_risk as _pr
+        from wardsoar.pc import process_risk as _pr
 
         exe = tmp_path / "x.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"bytes")
@@ -680,7 +680,7 @@ class TestScanProcessFailSafe:
         def raise_nsp(pid: int) -> MagicMock:
             raise NoSuchProcess(pid)
 
-        monkeypatch.setattr("src.process_risk.psutil.Process", raise_nsp)
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", raise_nsp)
 
         result = scan_process(99999)
 
@@ -716,12 +716,12 @@ class TestProcessRiskResultSerialization:
 
 class TestCheckSignature:
     def test_missing_exe_path_returns_unknown(self) -> None:
-        from src.process_risk import _check_signature
+        from wardsoar.pc.process_risk import _check_signature
 
         assert _check_signature("") == ("unknown", "")
 
     def test_nonexistent_path_returns_unknown(self, tmp_path: "object") -> None:
-        from src.process_risk import _check_signature
+        from wardsoar.pc.process_risk import _check_signature
 
         ghost = str(tmp_path) + r"\nope.exe"  # type: ignore[operator]
         assert _check_signature(ghost) == ("unknown", "")
@@ -729,7 +729,7 @@ class TestCheckSignature:
     def test_timeout_returns_unknown(
         self, tmp_path: "object", monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from src.process_risk import _check_signature
+        from wardsoar.pc.process_risk import _check_signature
 
         # Create a real file so the is_file() guard passes.
         target = tmp_path / "dummy.exe"  # type: ignore[attr-defined]
@@ -741,17 +741,17 @@ class TestCheckSignature:
         monkeypatch.setattr(subprocess, "run", raising_run)
         # Must point POWERSHELL at a real file so the guard passes.
         ps = target  # reuse
-        monkeypatch.setattr("src.process_risk.win_paths.POWERSHELL", str(ps))
+        monkeypatch.setattr("wardsoar.pc.process_risk.win_paths.POWERSHELL", str(ps))
 
         result = _check_signature(str(target))
         assert result == ("unknown", "")
 
     def test_parses_valid_json(self, tmp_path: "object", monkeypatch: pytest.MonkeyPatch) -> None:
-        from src.process_risk import _check_signature
+        from wardsoar.pc.process_risk import _check_signature
 
         target = tmp_path / "dummy.exe"  # type: ignore[attr-defined]
         target.write_bytes(b"")
-        monkeypatch.setattr("src.process_risk.win_paths.POWERSHELL", str(target))
+        monkeypatch.setattr("wardsoar.pc.process_risk.win_paths.POWERSHELL", str(target))
 
         def fake_run(*_a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(

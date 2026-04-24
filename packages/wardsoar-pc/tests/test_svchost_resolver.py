@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.svchost_resolver import (
+from wardsoar.pc.svchost_resolver import (
     _services_from_cmdline,
     _services_from_tasklist,
     resolve_services_for_pid,
@@ -29,7 +29,7 @@ def fake_tasklist_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     fake_root = tmp_path
     (fake_root / "System32").mkdir(parents=True)
     (fake_root / "System32" / "tasklist.exe").write_bytes(b"")
-    monkeypatch.setattr("src.svchost_resolver.win_paths._SYSTEM_ROOT", str(fake_root))
+    monkeypatch.setattr("wardsoar.pc.svchost_resolver.win_paths._SYSTEM_ROOT", str(fake_root))
     return fake_root / "System32" / "tasklist.exe"
 
 
@@ -68,7 +68,7 @@ class TestServicesFromTasklist:
     def test_missing_exe_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("src.svchost_resolver.win_paths._SYSTEM_ROOT", str(tmp_path))
+        monkeypatch.setattr("wardsoar.pc.svchost_resolver.win_paths._SYSTEM_ROOT", str(tmp_path))
         assert _services_from_tasklist(1234) == []
 
     def test_timeout_returns_empty(
@@ -106,7 +106,7 @@ class TestServicesFromCmdline:
             "Dnscache",
         ]
         monkeypatch.setattr(
-            "src.svchost_resolver.psutil.Process",
+            "wardsoar.pc.svchost_resolver.psutil.Process",
             lambda pid: fake_proc,
         )
 
@@ -118,7 +118,7 @@ class TestServicesFromCmdline:
         fake_proc = MagicMock()
         fake_proc.cmdline.return_value = ["C:/Windows/System32/svchost.exe", "-k", "netsvcs"]
         monkeypatch.setattr(
-            "src.svchost_resolver.psutil.Process",
+            "wardsoar.pc.svchost_resolver.psutil.Process",
             lambda pid: fake_proc,
         )
 
@@ -130,7 +130,7 @@ class TestServicesFromCmdline:
         def raise_nsp(pid: int) -> object:
             raise NoSuchProcess(pid)
 
-        monkeypatch.setattr("src.svchost_resolver.psutil.Process", raise_nsp)
+        monkeypatch.setattr("wardsoar.pc.svchost_resolver.psutil.Process", raise_nsp)
         assert _services_from_cmdline(99999) == []
 
 
@@ -158,7 +158,7 @@ class TestResolveServicesForPid:
             "-s",
             "Dnscache",
         ]
-        monkeypatch.setattr("src.svchost_resolver.psutil.Process", lambda pid: fake_proc)
+        monkeypatch.setattr("wardsoar.pc.svchost_resolver.psutil.Process", lambda pid: fake_proc)
 
         services = resolve_services_for_pid(1234)
         assert services == ["BITS", "Dnscache"]

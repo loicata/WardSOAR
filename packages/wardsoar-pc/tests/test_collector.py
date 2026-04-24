@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from src.collector import ContextCollector
-from src.models import (
+from wardsoar.pc.collector import ContextCollector
+from wardsoar.core.models import (
     IPReputation,
     NetworkContext,
     SuricataAlert,
@@ -62,7 +62,7 @@ class TestGetActiveConnections:
     @pytest.mark.asyncio
     async def test_returns_connections(self) -> None:
         collector = ContextCollector(config={})
-        with patch("src.collector.psutil") as mock_psutil:
+        with patch("wardsoar.pc.collector.psutil") as mock_psutil:
             mock_conn = MagicMock()
             mock_conn.laddr = MagicMock(ip="192.168.1.100", port=443)
             mock_conn.raddr = MagicMock(ip="10.0.0.1", port=54321)
@@ -79,7 +79,7 @@ class TestGetActiveConnections:
     @pytest.mark.asyncio
     async def test_filter_by_ip(self) -> None:
         collector = ContextCollector(config={})
-        with patch("src.collector.psutil") as mock_psutil:
+        with patch("wardsoar.pc.collector.psutil") as mock_psutil:
             conn1 = MagicMock()
             conn1.laddr = MagicMock(ip="192.168.1.100", port=443)
             conn1.raddr = MagicMock(ip="10.0.0.1", port=54321)
@@ -102,7 +102,7 @@ class TestGetActiveConnections:
     async def test_handles_connections_without_raddr(self) -> None:
         """Connections with no remote address (listening) should be skipped."""
         collector = ContextCollector(config={})
-        with patch("src.collector.psutil") as mock_psutil:
+        with patch("wardsoar.pc.collector.psutil") as mock_psutil:
             conn = MagicMock()
             conn.laddr = MagicMock(ip="0.0.0.0", port=80)
             conn.raddr = None
@@ -117,7 +117,7 @@ class TestGetActiveConnections:
     async def test_error_returns_empty_list(self) -> None:
         """Fail-safe: errors should return empty list, not crash."""
         collector = ContextCollector(config={})
-        with patch("src.collector.psutil") as mock_psutil:
+        with patch("wardsoar.pc.collector.psutil") as mock_psutil:
             mock_psutil.net_connections.side_effect = PermissionError("Access denied")
             result = await collector.get_active_connections()
             assert result == []
@@ -139,7 +139,7 @@ class TestGetDnsCache:
             "----                 ----------          -----------  ----\n"
             "example.com          example.com         A            93.184.216.34\n"
         )
-        with patch("src.collector.subprocess") as mock_sub:
+        with patch("wardsoar.pc.collector.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.stdout = mock_output
             mock_result.returncode = 0
@@ -151,7 +151,7 @@ class TestGetDnsCache:
     @pytest.mark.asyncio
     async def test_error_returns_empty_list(self) -> None:
         collector = ContextCollector(config={})
-        with patch("src.collector.subprocess") as mock_sub:
+        with patch("wardsoar.pc.collector.subprocess") as mock_sub:
             mock_sub.run.side_effect = FileNotFoundError("powershell not found")
             result = await collector.get_dns_cache()
             assert result == []
@@ -165,7 +165,7 @@ class TestGetDnsCache:
         back to an empty list rather than letting the AttributeError
         out."""
         collector = ContextCollector(config={})
-        with patch("src.collector.subprocess") as mock_sub:
+        with patch("wardsoar.pc.collector.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = None  # <-- the pathological case
@@ -187,7 +187,7 @@ class TestGetArpCache:
     async def test_returns_arp_entries(self) -> None:
         collector = ContextCollector(config={})
         mock_output = "192.168.1.1     00-11-22-33-44-55  dynamic\n"
-        with patch("src.collector.subprocess") as mock_sub:
+        with patch("wardsoar.pc.collector.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.stdout = mock_output
             mock_result.returncode = 0
@@ -199,7 +199,7 @@ class TestGetArpCache:
     @pytest.mark.asyncio
     async def test_error_returns_empty_list(self) -> None:
         collector = ContextCollector(config={})
-        with patch("src.collector.subprocess") as mock_sub:
+        with patch("wardsoar.pc.collector.subprocess") as mock_sub:
             mock_sub.run.side_effect = OSError("Command failed")
             result = await collector.get_arp_cache()
             assert result == []
@@ -245,7 +245,7 @@ class TestGetIpReputation:
         mock_response.json.return_value = {"data": {"abuseConfidenceScore": 85}}
 
         with patch.dict("os.environ", {"ABUSEIPDB_API_KEY": "test-key"}):
-            with patch("src.collector.httpx.AsyncClient") as mock_client:
+            with patch("wardsoar.pc.collector.httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.get.return_value = mock_response
                 mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -269,7 +269,7 @@ class TestGetIpReputation:
         mock_response.json.return_value = {"data": {"abuseConfidenceScore": 20}}
 
         with patch.dict("os.environ", {"ABUSEIPDB_API_KEY": "test-key"}):
-            with patch("src.collector.httpx.AsyncClient") as mock_client:
+            with patch("wardsoar.pc.collector.httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.get.return_value = mock_response
                 mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -288,7 +288,7 @@ class TestGetIpReputation:
         collector = ContextCollector(config={}, reputation_config=reputation_cfg)
 
         with patch.dict("os.environ", {"ABUSEIPDB_API_KEY": "test-key"}):
-            with patch("src.collector.httpx.AsyncClient") as mock_client:
+            with patch("wardsoar.pc.collector.httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.get.side_effect = httpx.TimeoutException("timeout")
                 mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -311,7 +311,7 @@ class TestGetIpReputation:
         mock_response.json.return_value = {"pulse_info": {"count": 5}}
 
         with patch.dict("os.environ", {"OTX_API_KEY": "test-key"}):
-            with patch("src.collector.httpx.AsyncClient") as mock_client:
+            with patch("wardsoar.pc.collector.httpx.AsyncClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_instance.get.return_value = mock_response
                 mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)

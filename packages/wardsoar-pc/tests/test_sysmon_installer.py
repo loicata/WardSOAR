@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.sysmon_installer import (
+from wardsoar.pc.sysmon_installer import (
     InstallLaunchResult,
     describe_script_location,
     find_install_script,
@@ -33,7 +33,7 @@ def with_installed_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     """
     fake_ps = tmp_path / "powershell.exe"
     fake_ps.write_bytes(b"")
-    monkeypatch.setattr("src.sysmon_installer.win_paths.POWERSHELL", str(fake_ps))
+    monkeypatch.setattr("wardsoar.pc.sysmon_installer.win_paths.POWERSHELL", str(fake_ps))
     return fake_ps
 
 
@@ -55,7 +55,7 @@ class TestLaunchInstallScript:
     ) -> None:
         # Point POWERSHELL at a non-existent file.
         monkeypatch.setattr(
-            "src.sysmon_installer.win_paths.POWERSHELL", str(tmp_path / "ghost.exe")
+            "wardsoar.pc.sysmon_installer.win_paths.POWERSHELL", str(tmp_path / "ghost.exe")
         )
         result = launch_install_script()
         assert result.started is False
@@ -65,7 +65,7 @@ class TestLaunchInstallScript:
         self, with_installed_scripts: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """If neither the repo nor the bundle path has the script."""
-        monkeypatch.setattr("src.sysmon_installer.find_install_script", lambda: None)
+        monkeypatch.setattr("wardsoar.pc.sysmon_installer.find_install_script", lambda: None)
         result = launch_install_script()
         assert result.started is False
         assert "install-sysmon.ps1" in result.error

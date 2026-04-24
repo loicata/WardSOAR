@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.forensics import FlowKey
-from src.process_snapshot_buffer import (
+from wardsoar.pc.forensics import FlowKey
+from wardsoar.pc.process_snapshot_buffer import (
     NetConnectionsBuffer,
     Snapshot,
     _ConnTuple,
@@ -90,7 +90,7 @@ class TestCaptureSnapshot:
     def test_capture_keeps_valid_connections(self) -> None:
         buffer = NetConnectionsBuffer()
         with patch(
-            "src.process_snapshot_buffer.psutil.net_connections",
+            "wardsoar.pc.process_snapshot_buffer.psutil.net_connections",
             return_value=[
                 _fake_psutil_conn(pid=10, laddr_port=55555, raddr_ip="1.2.3.4", raddr_port=443),
                 _fake_psutil_conn(pid=20, laddr_port=22),  # listener
@@ -106,7 +106,7 @@ class TestCaptureSnapshot:
     def test_capture_returns_empty_on_permission_error(self) -> None:
         buffer = NetConnectionsBuffer()
         with patch(
-            "src.process_snapshot_buffer.psutil.net_connections",
+            "wardsoar.pc.process_snapshot_buffer.psutil.net_connections",
             side_effect=PermissionError("denied"),
         ):
             snap = buffer._capture()
@@ -186,7 +186,7 @@ class TestLifecycle:
     async def test_start_stops_cleanly(self) -> None:
         buffer = NetConnectionsBuffer(interval_seconds=0.5, retention_seconds=1.0)
         with patch(
-            "src.process_snapshot_buffer.psutil.net_connections",
+            "wardsoar.pc.process_snapshot_buffer.psutil.net_connections",
             return_value=[],
         ):
             await buffer.start()
@@ -200,7 +200,7 @@ class TestLifecycle:
     async def test_start_is_idempotent(self) -> None:
         buffer = NetConnectionsBuffer(interval_seconds=0.5, retention_seconds=1.0)
         with patch(
-            "src.process_snapshot_buffer.psutil.net_connections",
+            "wardsoar.pc.process_snapshot_buffer.psutil.net_connections",
             return_value=[],
         ):
             await buffer.start()
@@ -213,7 +213,7 @@ class TestLifecycle:
     async def test_buffer_eventually_contains_snapshots(self) -> None:
         buffer = NetConnectionsBuffer(interval_seconds=0.05, retention_seconds=0.3)
         with patch(
-            "src.process_snapshot_buffer.psutil.net_connections",
+            "wardsoar.pc.process_snapshot_buffer.psutil.net_connections",
             return_value=[
                 _fake_psutil_conn(pid=42, laddr_port=55555, raddr_ip="1.2.3.4", raddr_port=443),
             ],

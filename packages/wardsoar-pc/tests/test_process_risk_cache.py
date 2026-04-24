@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-from src.process_risk import ProcessRiskResult
-from src.process_risk_cache import ProcessRiskCache
+from wardsoar.pc.process_risk import ProcessRiskResult
+from wardsoar.pc.process_risk_cache import ProcessRiskCache
 
 
 def _fake_result(pid: int, verdict: str = "benign") -> ProcessRiskResult:
@@ -22,8 +22,8 @@ class TestCacheHit:
             return _fake_result(pid)
 
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=fake_scan),
-            patch("src.process_risk_cache._safe_create_time", return_value=123.0),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=fake_scan),
+            patch("wardsoar.pc.process_risk_cache._safe_create_time", return_value=123.0),
         ):
             cache = ProcessRiskCache()
             first = cache.get_or_scan(1234)
@@ -43,8 +43,8 @@ class TestTTLExpiry:
             return _fake_result(pid)
 
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=fake_scan),
-            patch("src.process_risk_cache._safe_create_time", return_value=123.0),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=fake_scan),
+            patch("wardsoar.pc.process_risk_cache._safe_create_time", return_value=123.0),
         ):
             # TTL is clamped at 1 s to prevent an accidental spinning
             # loop in prod — pick 1 s and sleep just past it.
@@ -66,9 +66,9 @@ class TestPIDReuseDetection:
 
         create_times = iter([100.0, 200.0])  # two different stamps
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=fake_scan),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=fake_scan),
             patch(
-                "src.process_risk_cache._safe_create_time",
+                "wardsoar.pc.process_risk_cache._safe_create_time",
                 side_effect=lambda pid: next(create_times),
             ),
         ):
@@ -82,8 +82,8 @@ class TestPIDReuseDetection:
 class TestClearAndInvalidate:
     def test_clear_empties_cache(self) -> None:
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=_fake_result),
-            patch("src.process_risk_cache._safe_create_time", return_value=1.0),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=_fake_result),
+            patch("wardsoar.pc.process_risk_cache._safe_create_time", return_value=1.0),
         ):
             cache = ProcessRiskCache()
             cache.get_or_scan(1)
@@ -94,8 +94,8 @@ class TestClearAndInvalidate:
 
     def test_invalidate_removes_single_entry(self) -> None:
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=_fake_result),
-            patch("src.process_risk_cache._safe_create_time", return_value=1.0),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=_fake_result),
+            patch("wardsoar.pc.process_risk_cache._safe_create_time", return_value=1.0),
         ):
             cache = ProcessRiskCache()
             cache.get_or_scan(1)
@@ -115,8 +115,8 @@ class TestCreateTimeUnavailable:
             return _fake_result(pid)
 
         with (
-            patch("src.process_risk_cache.scan_process", side_effect=fake_scan),
-            patch("src.process_risk_cache._safe_create_time", return_value=None),
+            patch("wardsoar.pc.process_risk_cache.scan_process", side_effect=fake_scan),
+            patch("wardsoar.pc.process_risk_cache._safe_create_time", return_value=None),
         ):
             cache = ProcessRiskCache()
             cache.get_or_scan(1234)

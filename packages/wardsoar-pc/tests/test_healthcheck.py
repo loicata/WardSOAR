@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.healthcheck import ComponentStatus, HealthChecker, HealthResult
-from src.pfsense_ssh import PfSenseSSH
+from wardsoar.pc.healthcheck import ComponentStatus, HealthChecker, HealthResult
+from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 
 class TestHealthResult:
@@ -40,7 +40,7 @@ class TestIndividualChecks:
     @pytest.mark.asyncio
     async def test_check_disk_space_healthy(self) -> None:
         hc = HealthChecker({"disk_warning_threshold_mb": 100})
-        with patch("src.healthcheck.psutil") as mock_psutil:
+        with patch("wardsoar.pc.healthcheck.psutil") as mock_psutil:
             mock_psutil.disk_usage.return_value = MagicMock(free=1_000_000_000)
             result = await hc.check_disk_space()
         assert result.status == ComponentStatus.HEALTHY
@@ -48,7 +48,7 @@ class TestIndividualChecks:
     @pytest.mark.asyncio
     async def test_check_disk_space_low(self) -> None:
         hc = HealthChecker({"disk_warning_threshold_mb": 1000})
-        with patch("src.healthcheck.psutil") as mock_psutil:
+        with patch("wardsoar.pc.healthcheck.psutil") as mock_psutil:
             mock_psutil.disk_usage.return_value = MagicMock(free=100_000_000)
             result = await hc.check_disk_space()
         assert result.status == ComponentStatus.DEGRADED

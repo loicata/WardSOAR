@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.forensics import FlowKey
-from src.sysmon_events import (
+from wardsoar.pc.forensics import FlowKey
+from wardsoar.pc.sysmon_events import (
     SysmonFlowHit,
     _run_sysmon_event3_query,
     _try_match,
@@ -73,7 +73,7 @@ def fake_powershell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point ``win_paths.POWERSHELL`` at a valid file so the guard passes."""
     ps = tmp_path / "powershell.exe"
     ps.write_bytes(b"")
-    monkeypatch.setattr("src.sysmon_events.win_paths.POWERSHELL", str(ps))
+    monkeypatch.setattr("wardsoar.pc.sysmon_events.win_paths.POWERSHELL", str(ps))
     return ps
 
 
@@ -154,7 +154,7 @@ class TestRunQuery:
     def test_powershell_missing_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("src.sysmon_events.win_paths.POWERSHELL", str(tmp_path / "ghost.exe"))
+        monkeypatch.setattr("wardsoar.pc.sysmon_events.win_paths.POWERSHELL", str(tmp_path / "ghost.exe"))
         result = _run_sysmon_event3_query(datetime.now(timezone.utc), 30)
         assert result == []
 
@@ -229,7 +229,7 @@ class TestFindPidsForFlow:
         )
 
         with patch(
-            "src.sysmon_events._run_sysmon_event3_query",
+            "wardsoar.pc.sysmon_events._run_sysmon_event3_query",
             return_value=[event],
         ):
             hits = await find_pids_for_flow(
@@ -250,7 +250,7 @@ class TestFindPidsForFlow:
             dest_port=80,
         )
         with patch(
-            "src.sysmon_events._run_sysmon_event3_query",
+            "wardsoar.pc.sysmon_events._run_sysmon_event3_query",
             return_value=[unrelated],
         ):
             hits = await find_pids_for_flow(
@@ -270,7 +270,7 @@ class TestFindPidsForFlow:
         )
 
         with patch(
-            "src.sysmon_events._run_sysmon_event3_query",
+            "wardsoar.pc.sysmon_events._run_sysmon_event3_query",
             return_value=[event],
         ):
             hits = await find_pids_for_flow(_outbound_flow(), datetime(2026, 4, 23, 9, 0))

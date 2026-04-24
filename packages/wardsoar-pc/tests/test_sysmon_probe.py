@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.sysmon_probe import (
+from wardsoar.pc.sysmon_probe import (
     SysmonStatus,
     probe_sysmon,
     recommended_install_snippet,
@@ -43,7 +43,7 @@ def fake_sc_exe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     sc = tmp_path / "sc.exe"
     sc.write_bytes(b"")
-    monkeypatch.setattr("src.sysmon_probe.win_paths.SC", str(sc))
+    monkeypatch.setattr("wardsoar.pc.sysmon_probe.win_paths.SC", str(sc))
     return sc
 
 
@@ -150,7 +150,7 @@ class TestProbeSysmon:
     ) -> None:
         """Non-Windows host or sc.exe wiped — probe cannot even run."""
         bogus = tmp_path / "nonexistent" / "sc.exe"
-        monkeypatch.setattr("src.sysmon_probe.win_paths.SC", str(bogus))
+        monkeypatch.setattr("wardsoar.pc.sysmon_probe.win_paths.SC", str(bogus))
 
         status = probe_sysmon()
 

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.forensics import (
+from wardsoar.pc.forensics import (
     FlowKey,
     ForensicAnalyzer,
     _conn_matches_flow,
@@ -19,7 +19,7 @@ from src.forensics import (
     _select_external_ip,
     build_flow_key,
 )
-from src.models import ForensicResult, SuricataAlert, SuricataAlertSeverity
+from wardsoar.core.models import ForensicResult, SuricataAlert, SuricataAlertSeverity
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -270,8 +270,8 @@ class TestGetProcessesByFlow:
         other.laddr = MagicMock(port=55444, ip="0.0.0.0")
         other.raddr = MagicMock(ip="162.159.207.0", port=443)
 
-        with patch("src.forensics.psutil.net_connections", return_value=[match, other]):
-            with patch("src.forensics.psutil.Process") as mock_proc:
+        with patch("wardsoar.pc.forensics.psutil.net_connections", return_value=[match, other]):
+            with patch("wardsoar.pc.forensics.psutil.Process") as mock_proc:
                 mock_proc.side_effect = lambda pid: MagicMock(
                     name=lambda: "chrome.exe",
                     exe=lambda: "C:/chrome.exe",
@@ -300,8 +300,8 @@ class TestGetProcessesByFlow:
         listener.laddr = MagicMock(port=22, ip="0.0.0.0")
         listener.raddr = None
 
-        with patch("src.forensics.psutil.net_connections", return_value=[listener]):
-            with patch("src.forensics.psutil.Process") as mock_proc:
+        with patch("wardsoar.pc.forensics.psutil.net_connections", return_value=[listener]):
+            with patch("wardsoar.pc.forensics.psutil.Process") as mock_proc:
                 mock_proc.side_effect = lambda pid: MagicMock(
                     name=lambda: "sshd.exe",
                     exe=lambda: "C:/sshd.exe",
@@ -322,7 +322,7 @@ class TestGetProcessesByFlow:
     @pytest.mark.asyncio
     async def test_no_match_returns_empty(self) -> None:
         analyzer = ForensicAnalyzer({})
-        with patch("src.forensics.psutil.net_connections", return_value=[]):
+        with patch("wardsoar.pc.forensics.psutil.net_connections", return_value=[]):
             flow = FlowKey(
                 local_ip="192.168.2.100",
                 local_port=55555,
@@ -399,7 +399,7 @@ class TestGetProcessesByRemoteIp:
     @pytest.mark.asyncio
     async def test_returns_matching_processes(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.psutil") as mock_psutil:
+        with patch("wardsoar.pc.forensics.psutil") as mock_psutil:
             # Mock a network connection to the target IP
             mock_conn = MagicMock()
             mock_conn.raddr = MagicMock(ip="10.0.0.1")
@@ -423,7 +423,7 @@ class TestGetProcessesByRemoteIp:
     @pytest.mark.asyncio
     async def test_no_matching_connections(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.psutil") as mock_psutil:
+        with patch("wardsoar.pc.forensics.psutil") as mock_psutil:
             mock_psutil.net_connections.return_value = []
             result = await fa.get_processes_by_remote_ip("10.0.0.1")
             assert result == []
@@ -431,7 +431,7 @@ class TestGetProcessesByRemoteIp:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.psutil") as mock_psutil:
+        with patch("wardsoar.pc.forensics.psutil") as mock_psutil:
             mock_psutil.net_connections.side_effect = PermissionError("Denied")
             result = await fa.get_processes_by_remote_ip("10.0.0.1")
             assert result == []
@@ -448,7 +448,7 @@ class TestBuildProcessTree:
     @pytest.mark.asyncio
     async def test_returns_process_tree(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.psutil") as mock_psutil:
+        with patch("wardsoar.pc.forensics.psutil") as mock_psutil:
             mock_proc = MagicMock()
             mock_proc.pid = 1234
             mock_proc.name.return_value = "child.exe"
@@ -470,7 +470,7 @@ class TestBuildProcessTree:
     @pytest.mark.asyncio
     async def test_nonexistent_pid_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.psutil") as mock_psutil:
+        with patch("wardsoar.pc.forensics.psutil") as mock_psutil:
             mock_psutil.Process.side_effect = psutil_no_such_process()
             result = await fa.build_process_tree(99999)
             assert result == []
@@ -494,7 +494,7 @@ class TestQuerySysmonEvents:
     @pytest.mark.asyncio
     async def test_returns_parsed_events(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = "[]"  # No events
@@ -506,7 +506,7 @@ class TestQuerySysmonEvents:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_sub.run.side_effect = FileNotFoundError("powershell not found")
             result = await fa.query_sysmon_events(_make_alert())
             assert result == []
@@ -525,7 +525,7 @@ class TestQuerySysmonEvents:
         path above.
         """
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = None  # <-- the pathological case
@@ -546,7 +546,7 @@ class TestCheckRegistryPersistence:
     @pytest.mark.asyncio
     async def test_returns_entries(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
@@ -558,7 +558,7 @@ class TestCheckRegistryPersistence:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_sub.run.side_effect = OSError("Failed")
             result = await fa.check_registry_persistence()
             assert result == []
@@ -575,7 +575,7 @@ class TestFindSuspiciousFiles:
     @pytest.mark.asyncio
     async def test_returns_files(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.Path") as mock_path_cls:
+        with patch("wardsoar.pc.forensics.Path") as mock_path_cls:
             mock_dir = MagicMock()
             mock_dir.exists.return_value = False
             mock_path_cls.return_value = mock_dir
@@ -586,7 +586,7 @@ class TestFindSuspiciousFiles:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.os") as mock_os:
+        with patch("wardsoar.pc.forensics.os") as mock_os:
             mock_os.environ = {}
             mock_os.path.expanduser.side_effect = OSError("fail")
             result = await fa.find_suspicious_files(_make_alert())
@@ -634,7 +634,7 @@ class TestFindSuspiciousFilesFilters:
         self._write_file(tmp_path, "script.ps1")
 
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
+        with patch("wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
             result = await fa.find_suspicious_files(self._alert_now())
 
         names = {Path(f["path"]).name for f in result}
@@ -650,7 +650,7 @@ class TestFindSuspiciousFilesFilters:
         self._write_file(tmp_path, "ok.exe", size=2048)
 
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
+        with patch("wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
             result = await fa.find_suspicious_files(self._alert_now())
 
         names = {Path(f["path"]).name for f in result}
@@ -664,7 +664,7 @@ class TestFindSuspiciousFilesFilters:
         self._write_file(tmp_path, "big.exe", size=100_000)
 
         fa = ForensicAnalyzer({"suspicious_files": {"max_size_bytes": 50_000}})
-        with patch("src.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
+        with patch("wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
             result = await fa.find_suspicious_files(self._alert_now())
 
         names = {Path(f["path"]).name for f in result}
@@ -684,7 +684,7 @@ class TestFindSuspiciousFilesFilters:
         recent = self._write_file(tmp_path, "recent.exe")
 
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
+        with patch("wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
             result = await fa.find_suspicious_files(self._alert_now())
 
         names = {Path(f["path"]).name for f in result}
@@ -703,7 +703,7 @@ class TestFindSuspiciousFilesFilters:
 
         fa = ForensicAnalyzer({})
         with patch(
-            "src.forensics.SUSPICIOUS_DIRECTORIES",
+            "wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES",
             [str(tmp_path), str(chrome_dir)],
         ):
             result = await fa.find_suspicious_files(self._alert_now())
@@ -719,7 +719,7 @@ class TestFindSuspiciousFilesFilters:
         self._write_file(tmp_path, "real.exe")
 
         fa = ForensicAnalyzer({"suspicious_files": {"excluded_path_fragments": ["custom_app"]}})
-        with patch("src.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
+        with patch("wardsoar.pc.forensics.SUSPICIOUS_DIRECTORIES", [str(tmp_path)]):
             result = await fa.find_suspicious_files(self._alert_now())
 
         names = {Path(f["path"]).name for f in result}
@@ -796,7 +796,7 @@ class TestQueryWindowsEvents:
     @pytest.mark.asyncio
     async def test_returns_events(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = '[{"Id": 4624, "TimeCreated": "2026-03-15T10:00:00"}]'
@@ -809,7 +809,7 @@ class TestQueryWindowsEvents:
     @pytest.mark.asyncio
     async def test_empty_output_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = ""
@@ -821,7 +821,7 @@ class TestQueryWindowsEvents:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_sub.run.side_effect = FileNotFoundError()
             result = await fa.query_windows_events(_make_alert())
             assert result == []
@@ -830,7 +830,7 @@ class TestQueryWindowsEvents:
     async def test_single_event_dict(self) -> None:
         """PowerShell returns a dict instead of list for single event."""
         fa = ForensicAnalyzer({})
-        with patch("src.forensics.subprocess") as mock_sub:
+        with patch("wardsoar.pc.forensics.subprocess") as mock_sub:
             mock_result = MagicMock()
             mock_result.returncode = 0
             mock_result.stdout = '{"Id": 4688, "TimeCreated": "2026-03-15T10:00:00"}'
