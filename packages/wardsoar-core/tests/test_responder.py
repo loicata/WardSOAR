@@ -266,8 +266,8 @@ class TestBlockIpPfsense:
         IP could exhaust the limiter and prevent genuine blocks on the
         next fresh alert.
         """
-        from src.analyzer import ThreatAnalyzer  # noqa: F401 — keep imports grouped
-        from src.models import (
+        from wardsoar.core.analyzer import ThreatAnalyzer  # noqa: F401 — keep imports grouped
+        from wardsoar.core.models import (
             SuricataAlert,
             SuricataAlertSeverity,
             ThreatAnalysis,

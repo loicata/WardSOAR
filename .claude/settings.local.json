@@ -634,7 +634,31 @@
       "Bash(sed -i 's|^from src\\\\.main|from wardsoar.pc.main|g; s|^from src\\\\.pfsense_|from wardsoar.core.remote_agents.pfsense_|g; s|^from src\\\\.forensic\\\\.|from wardsoar.pc.forensic.|g; s|^from src\\\\.local_av\\\\.|from wardsoar.pc.local_av.|g; s|^from src\\\\.ui\\\\.|from wardsoar.pc.ui.|g; s|^from src\\\\.|from wardsoar.core.|g; s|\"src\\\\.main|\"wardsoar.pc.main|g; s|patch\\(\"src\\\\.main|patch\\(\"wardsoar.pc.main|g; s|patch\\(\"src\\\\.|patch\\(\"wardsoar.core.|g' packages/wardsoar-pc/tests/test_main.py)",
       "Bash(sed -i 's|^from wardsoar\\\\.core\\\\.__TRACKED_VAR__|from wardsoar.pc.__TRACKED_VAR__|g; s|patch\\(\"wardsoar\\\\.core\\\\.__TRACKED_VAR__|patch\\(\"wardsoar.pc.__TRACKED_VAR__|g' packages/wardsoar-pc/tests/test_main.py)",
       "Bash(.venv/Scripts/python.exe -m pytest tests/integration/test_scenarios.py::test_scenario_7_analyzer_crash_is_fail_safe -q)",
-      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/wardsoar/pc/main.py)"
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/wardsoar/pc/main.py)",
+      "Bash(sed -i 's|wardsoar = \"src.main:main\"|wardsoar = \"wardsoar.pc.main:main\"|g' pyproject.toml)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ packages/wardsoar-pc/tests/ tests/ -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_ui.py -q)",
+      "Bash(.venv/Scripts/python.exe -c \"from wardsoar.pc.ui.app import MainWindow\")",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ packages/wardsoar-pc/tests/ tests/)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_package_skeleton.py)",
+      "Bash(mv packages/wardsoar-pc/tests/test_package_skeleton.py packages/wardsoar-pc/tests/test_pc_package_skeleton.py)",
+      "Bash(mv packages/wardsoar-virus-sniff/tests/test_package_skeleton.py packages/wardsoar-virus-sniff/tests/test_vs_package_skeleton.py)",
+      "Bash(find . -name __pycache__ -not -path \"./.venv/*\" -exec rm -rf {} +)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_user_false_positives.py -q)",
+      "Bash(sed -i 's|\"src\\\\.config\\\\.|\"wardsoar.core.config.|g; s|\"src\\\\.vt_cache\\\\.|\"wardsoar.core.vt_cache.|g' packages/wardsoar-core/tests/test_user_false_positives.py packages/wardsoar-pc/tests/test_process_risk.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_user_false_positives.py packages/wardsoar-pc/tests/test_process_risk.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_filter.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_sysmon_installer.py::TestFindInstallScript::test_repo_script_is_found -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests/test_sysmon_installer.py packages/wardsoar-core/tests/test_filter.py -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_filter.py packages/wardsoar-pc/tests/test_sysmon_installer.py -q)",
+      "Bash(rm -f packages/wardsoar-pc/tests/conftest_root.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/ packages/wardsoar-pc/tests/ -q)",
+      "Bash(grep -n \"src\\\\\\\\\\\\\\\\\\\\|src/\" scripts/build.ps1)",
+      "Bash(grep -rn \"src[/\\\\\\\\\\\\\\\\]\\\\|from src\\\\.\\\\|import src\\\\.\" --include=\"*.py\" --include=\"*.spec\" --include=\"*.toml\" --include=\"*.ps1\" --include=\"*.bat\" --include=\"*.md\")",
+      "PowerShell(.\\\\scripts\\\\build.ps1 2>&1)",
+      "Bash(grep -n \"src\\\\\\\\\\\\\\\\ui\\\\\\\\\\\\\\\\assets\\\\\\\\\\\\\\\\ward.ico\\\\|src/ui/assets/ward.ico\\\\|ward\\\\.ico\" scripts/build.ps1)",
+      "Bash(grep -n \"src.ui.assets\\\\|src\\\\\\\\\\\\\\\\ui\\\\\\\\\\\\\\\\assets\" installer/ward.wxs)",
+      "Bash(certutil -hashfile \"dist/WardSOAR_0.22.7.msi\" SHA256)"
     ]
   }
 }

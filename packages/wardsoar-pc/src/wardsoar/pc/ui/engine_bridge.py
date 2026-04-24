@@ -25,12 +25,12 @@ from wardsoar.core.alert_enrichment import build_filtered_enriched, serialise_de
 from wardsoar.core.intel.manager import IntelManager
 from wardsoar.core.ip_enrichment import build_ip_enrichment_async
 from wardsoar.pc.healthcheck import HealthChecker
-from src.main import FilteredResult
+from wardsoar.pc.main import FilteredResult
 from wardsoar.core.models import DecisionRecord
 from wardsoar.core.watcher import EveJsonWatcher
 
 if TYPE_CHECKING:
-    from src.main import Pipeline
+    from wardsoar.pc.main import Pipeline
 
 logger = logging.getLogger("ward_soar.ui.engine_bridge")
 
@@ -131,7 +131,7 @@ class EngineWorker(QThread):
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Alert history file for persistence across restarts
-        from src.config import get_data_dir
+        from wardsoar.core.config import get_data_dir
 
         self._history_path = get_data_dir() / "logs" / "alerts_history.jsonl"
         self._history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -156,7 +156,7 @@ class EngineWorker(QThread):
         import os
         import tempfile
 
-        from src.config import get_data_dir
+        from wardsoar.core.config import get_data_dir
 
         app_tmp = get_data_dir() / "tmp"
         app_tmp.mkdir(parents=True, exist_ok=True)
@@ -309,7 +309,7 @@ class EngineWorker(QThread):
             return
 
         def _run() -> None:
-            from src.netgate_reset import format_result_for_display
+            from wardsoar.core.netgate_reset import format_result_for_display
 
             try:
                 result = self._pipeline.cleanup_netgate_state()
@@ -363,7 +363,7 @@ class EngineWorker(QThread):
 
     def netgate_applicable_fix_ids(self) -> set[str]:
         """Synchronous helper the UI calls to decide which checkboxes are active."""
-        from src.netgate_apply import applicable_fix_ids
+        from wardsoar.core.netgate_apply import applicable_fix_ids
 
         return applicable_fix_ids()
 
@@ -497,7 +497,7 @@ class EngineWorker(QThread):
 
         async def _run() -> None:
             try:
-                from src.models import ThreatAnalysis, ThreatVerdict
+                from wardsoar.core.models import ThreatAnalysis, ThreatVerdict
 
                 reasoning = (
                     operator_notes.strip()
@@ -625,7 +625,7 @@ class EngineWorker(QThread):
         archive path, the ``YYYY-MM`` month and the compressed
         size so the dropdown can render "March 2026 — 42 kB".
         """
-        from src.history_rotator import list_archives
+        from wardsoar.core.history_rotator import list_archives
 
         infos = list_archives(self._history_path)
         # v0.22.1 — archives are now monthly; expose the field as
@@ -651,7 +651,7 @@ class EngineWorker(QThread):
         """
         from pathlib import Path as _Path
 
-        from src.history_rotator import load_archive
+        from wardsoar.core.history_rotator import load_archive
 
         raw_lines = load_archive(_Path(archive_path), limit=limit)
         alerts: list[dict[str, Any]] = []

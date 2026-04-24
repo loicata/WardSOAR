@@ -85,7 +85,7 @@ class Pipeline:
         # audit has run yet", which the gate treats as "unknown" (allows
         # Monitor, blocks Protect/Hard Protect until the user runs the
         # Netgate check).
-        from src.netgate_audit import AuditResult as _AuditResult
+        from wardsoar.core.netgate_audit import AuditResult as _AuditResult
 
         self._last_audit_result: Optional[_AuditResult] = None
         # Tamper detector built lazily in :meth:`_get_tamper_detector`
@@ -103,7 +103,7 @@ class Pipeline:
             blocklist_table=pfsense_cfg.get("blocklist_table", "blocklist"),
         )
         self._pfsense_ssh = pfsense_ssh
-        from src.config import get_bundle_dir, get_data_dir
+        from wardsoar.core.config import get_bundle_dir, get_data_dir
 
         block_tracker = BlockTracker(persist_path=get_data_dir() / "block_tracker.json")
         # Keep a direct handle so the post-reset cleanup can purge the
@@ -174,7 +174,7 @@ class Pipeline:
         # back over the last ~60 s of socket history. The background
         # task is started from the engine loop once asyncio is up
         # (see src/ui/engine_bridge.py).
-        from src.process_snapshot_buffer import NetConnectionsBuffer, attach_buffer_to_analyzer
+        from wardsoar.pc.process_snapshot_buffer import NetConnectionsBuffer, attach_buffer_to_analyzer
 
         self._conn_buffer = NetConnectionsBuffer()
         attach_buffer_to_analyzer(self._forensics, self._conn_buffer)
@@ -183,7 +183,7 @@ class Pipeline:
         # ~100 ms cost of scoring a process across bursts of alerts
         # from the same PID — a 50-alert Cloudflare STUN burst costs
         # one scan instead of fifty.
-        from src.process_risk_cache import ProcessRiskCache
+        from wardsoar.pc.process_risk_cache import ProcessRiskCache
 
         self._process_risk_cache = ProcessRiskCache()
 
@@ -192,7 +192,7 @@ class Pipeline:
         # signals (regularity, novelty, verdict stability) over the
         # last 7 days. The background flush task starts from the
         # engine loop; see src/ui/engine_bridge.py.
-        from src.alerts_stats import AlertsStatsStore
+        from wardsoar.core.alerts_stats import AlertsStatsStore
 
         self._alerts_stats = AlertsStatsStore(
             db_path=get_data_dir() / "data" / "alerts_stats.db",
@@ -443,7 +443,7 @@ class Pipeline:
         UI's mode-escalation gate can consult it without re-running
         SSH commands.
         """
-        from src.netgate_audit import run_audit
+        from wardsoar.core.netgate_audit import run_audit
 
         result = await run_audit(self._pfsense_ssh, self._config)
         self._last_audit_result = result
@@ -467,8 +467,8 @@ class Pipeline:
     def _get_tamper_detector(self) -> "Any":
         """Lazy builder for the detector (reuses SSH + a stable path)."""
         if self._tamper_detector is None:
-            from src.config import get_data_dir
-            from src.netgate_tamper import NetgateTamperDetector
+            from wardsoar.core.config import get_data_dir
+            from wardsoar.core.netgate_tamper import NetgateTamperDetector
 
             self._tamper_detector = NetgateTamperDetector(
                 ssh=self._pfsense_ssh,
@@ -519,8 +519,8 @@ class Pipeline:
         Returns:
             A :class:`~src.netgate_reset.NetgateResetCleanupResult`.
         """
-        from src.config import get_data_dir
-        from src.netgate_reset import cleanup_netgate_state, default_baseline_path
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.netgate_reset import cleanup_netgate_state, default_baseline_path
 
         baseline_path = default_baseline_path(get_data_dir())
         result = cleanup_netgate_state(
@@ -570,13 +570,13 @@ class Pipeline:
         read exactly what would be written to the Netgate before
         clicking Deploy.
         """
-        from src.netgate_custom_rules import build_bundle
+        from wardsoar.core.netgate_custom_rules import build_bundle
 
         return build_bundle(self._known_actors)
 
     async def deploy_custom_rules(self) -> "Any":
         """Build the custom rules and push them to the Netgate via SSH."""
-        from src.netgate_custom_rules import build_bundle, deploy_bundle
+        from wardsoar.core.netgate_custom_rules import build_bundle, deploy_bundle
 
         bundle = build_bundle(self._known_actors)
         result = await deploy_bundle(self._pfsense_ssh, bundle)
@@ -600,8 +600,8 @@ class Pipeline:
         cached = getattr(self, "_netgate_applier", None)
         if cached is not None:
             return cached
-        from src.config import get_data_dir
-        from src.netgate_apply import NetgateApplier
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.netgate_apply import NetgateApplier
 
         applier = NetgateApplier(
             ssh=self._pfsense_ssh,
@@ -625,7 +625,7 @@ class Pipeline:
     @staticmethod
     def netgate_applicable_fix_ids() -> set[str]:
         """Fix ids that the UI is allowed to offer an Apply button for."""
-        from src.netgate_apply import applicable_fix_ids
+        from wardsoar.core.netgate_apply import applicable_fix_ids
 
         return applicable_fix_ids()
 
@@ -660,7 +660,7 @@ class Pipeline:
         # (PowerShell Authenticode, Sysmon Event 3) is amortised via
         # the PID cache — a burst of 50 STUN alerts from chrome.exe
         # costs one scoring call, not fifty.
-        from src.forensics import build_flow_key
+        from wardsoar.pc.forensics import build_flow_key
 
         flow = build_flow_key(alert)
         worst_risk_verdict: Optional[str] = None
@@ -882,8 +882,8 @@ def main() -> int:
     Returns:
         Exit code (0 for success).
     """
-    from src.config import DEFAULT_CONFIG_PATH, get_data_dir
-    from src.logger import setup_logging
+    from wardsoar.core.config import DEFAULT_CONFIG_PATH, get_data_dir
+    from wardsoar.core.logger import setup_logging
 
     # Initialise logging first so any failure downstream produces a trace.
     # The trace file (trace_debug.log) always captures at DEBUG — see
@@ -894,7 +894,7 @@ def main() -> int:
     needs_wizard = not DEFAULT_CONFIG_PATH.exists()
 
     # Start the UI application (wizard runs inside if needed)
-    from src.ui.app import WardApp
+    from wardsoar.pc.ui.app import WardApp
 
     app = WardApp(first_run=needs_wizard)
     return app.run()

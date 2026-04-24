@@ -204,8 +204,8 @@ class NetgateView(QWidget):
         # get_data_dir() rather than injecting the state from the app
         # shell because the checklist is a pure client-side concern:
         # no worker thread, no pipeline dependency.
-        from src.config import get_data_dir
-        from src.bootstrap_checklist import default_persist_path
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.bootstrap_checklist import default_persist_path
 
         self._checklist_state = BootstrapChecklistState(
             persist_path=default_persist_path(get_data_dir())
@@ -1037,7 +1037,7 @@ class NetgateView(QWidget):
         and could be re-called on demand if we ever add a refresh
         action.
         """
-        from src.sysmon_probe import probe_sysmon
+        from wardsoar.pc.sysmon_probe import probe_sysmon
 
         status = probe_sysmon()
         if status.healthy:
@@ -1093,7 +1093,7 @@ class NetgateView(QWidget):
         """
         from PySide6.QtCore import QTimer
 
-        from src.sysmon_installer import launch_install_script
+        from wardsoar.pc.sysmon_installer import launch_install_script
 
         self._sysmon_install_btn.setEnabled(False)
         self._sysmon_install_btn.setText("⏳ UAC prompt — check your desktop…")
@@ -1115,7 +1115,7 @@ class NetgateView(QWidget):
             self._refresh_sysmon_banner()
             # Stop polling once the banner cleared (probe reports
             # healthy) or after 24 polls (~2 min).
-            from src.sysmon_probe import probe_sysmon
+            from wardsoar.pc.sysmon_probe import probe_sysmon
 
             if probe_sysmon().healthy or self._sysmon_poll_count >= 24:
                 self._sysmon_poll_timer.stop()
@@ -1215,7 +1215,7 @@ class NetgateView(QWidget):
         candidates.append(repo_doc)
 
         try:
-            from src.config import get_bundle_dir
+            from wardsoar.core.config import get_bundle_dir
 
             candidates.append(get_bundle_dir() / "docs" / "bootstrap-netgate.md")
         except Exception:  # noqa: BLE001 — optional path resolution

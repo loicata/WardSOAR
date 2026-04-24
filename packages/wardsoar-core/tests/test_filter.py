@@ -119,10 +119,12 @@ class TestAlertFilterInit:
             encoding="utf-8",
         )
 
-        import src.config
+        # The filter module does ``from wardsoar.core.config import
+        # get_bundle_dir`` inline, so we patch both the canonical
+        # location and the name imported into the filter module.
+        import wardsoar.core.config
 
-        monkeypatch.setattr(src.config, "get_bundle_dir", lambda: bundle_root)
-        # Also patch the import the filter module performs inside __init__.
+        monkeypatch.setattr(wardsoar.core.config, "get_bundle_dir", lambda: bundle_root)
         monkeypatch.setattr("wardsoar.core.filter.Path", Path)
 
         flt = AlertFilter({"enabled": True, "config_file": "config/known_false_positives.yaml"})

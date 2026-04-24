@@ -825,7 +825,7 @@ def _load_yara_rules() -> Any:
         return None
 
     try:
-        from src.config import get_bundle_dir
+        from wardsoar.core.config import get_bundle_dir
     except Exception:  # noqa: BLE001 — config module optional in tests
         return None
 
@@ -956,8 +956,8 @@ def _vt_cache_signal(exe_path: str) -> tuple[int, str]:
         return 0, ""
 
     try:
-        from src.config import get_data_dir
-        from src.vt_cache import VTCache
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.vt_cache import VTCache
     except Exception:  # noqa: BLE001 — optional dependency path
         return 0, ""
 

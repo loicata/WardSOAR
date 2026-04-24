@@ -3,6 +3,12 @@
 
 Builds a one-folder distribution with PySide6 GUI.
 Run with: pyinstaller installer/ward.spec --noconfirm
+
+After the 2026-04-24 monorepo refactor, the application lives under
+``packages/wardsoar-pc/`` and shares ``packages/wardsoar-core/`` with
+the planned Virus Sniff appliance. The spec targets the canonical
+module path ``wardsoar.pc.main:main`` directly; the legacy shim
+``src/main.py`` is no longer referenced.
 """
 
 import sys
@@ -13,6 +19,10 @@ from PyInstaller.utils.hooks import collect_all
 block_cipher = None
 
 PROJECT_ROOT = Path(SPECPATH).parent
+CORE_SRC = PROJECT_ROOT / "packages" / "wardsoar-core" / "src"
+PC_SRC = PROJECT_ROOT / "packages" / "wardsoar-pc" / "src"
+PC_MAIN = PC_SRC / "wardsoar" / "pc" / "main.py"
+PC_UI_ASSETS = PC_SRC / "wardsoar" / "pc" / "ui" / "assets"
 
 # ``collect_all`` walks the package and returns every submodule, every
 # bundled data file (reportlab ships TTF fonts + CSS/PDF templates in
@@ -24,8 +34,16 @@ PROJECT_ROOT = Path(SPECPATH).parent
 _rl_datas, _rl_binaries, _rl_hiddenimports = collect_all("reportlab")
 
 a = Analysis(
-    [str(PROJECT_ROOT / "src" / "main.py")],
-    pathex=[str(PROJECT_ROOT)],
+    [str(PC_MAIN)],
+    # pathex must include both package src roots so PyInstaller's
+    # module resolver can import ``wardsoar.core.*`` and
+    # ``wardsoar.pc.*`` during analysis. Without them the monorepo
+    # editable installs would be invisible at build time.
+    pathex=[
+        str(PROJECT_ROOT),
+        str(CORE_SRC),
+        str(PC_SRC),
+    ],
     binaries=list(_rl_binaries),
     datas=[
         *_rl_datas,
@@ -42,8 +60,10 @@ a = Analysis(
         (str(PROJECT_ROOT / "config" / "cdn_allowlist.yaml"), "config"),
         # YARA rules directory (Phase 3)
         (str(PROJECT_ROOT / "config" / "yara_rules"), "config/yara_rules"),
-        # UI assets
-        (str(PROJECT_ROOT / "src" / "ui" / "assets"), "src/ui/assets"),
+        # UI assets (moved into wardsoar-pc during the monorepo refactor).
+        # Inside the bundle we still expose them at ``src/ui/assets`` so
+        # legacy shims reading asset paths with that prefix keep working.
+        (str(PC_UI_ASSETS), "src/ui/assets"),
         # EVE streaming script
         (str(PROJECT_ROOT / "scripts" / "sync_eve.ps1"), "scripts"),
         # Sysmon installer script — fetched live in the UI when the
@@ -70,85 +90,134 @@ a = Analysis(
         "pywintypes",
         "pythoncom",
         "win32timezone",
-        # src modules (ensure all are included)
-        "src",
-        "src.config",
-        "src.models",
-        "src.logger",
-        "src.main",
-        "src.watcher",
-        "src.alert_queue",
-        "src.filter",
-        "src.deduplicator",
-        "src.prescorer",
-        "src.collector",
-        "src.forensics",
-        "src.virustotal",
-        "src.baseline",
-        "src.analyzer",
-        "src.decision_cache",
-        "src.responder",
-        "src.rollback",
-        "src.rule_manager",
-        "src.forensic_report",
-        "src.notifier",
-        "src.metrics",
-        "src.healthcheck",
-        "src.change_manager",
-        "src.replay",
-        "src.trusted_temp",
-        "src.prescorer_feedback",
-        "src.vt_cache",
-        "src.win_paths",
-        "src.asn_enricher",
-        "src.suspect_asns",
-        "src.known_bad_actors",
-        "src.cdn_allowlist",
-        "src.netgate_audit",
-        "src.netgate_tamper",
-        "src.netgate_custom_rules",
-        "src.netgate_apply",
-        # Phase 7h — persistent url-table blocklist
-        "src.pfsense_aliastable",
-        "src.pfsense_alias_migrate",
-        # Phase 7b.2 — Suricata runmode tuning via config.xml
-        "src.pfsense_suricata_tune",
-        # Phase 7j (v0.9.0) — full-page alert detail + user FP overlay
-        "src.alert_enrichment",
-        "src.user_false_positives",
-        "src.ui.views.alert_detail",
+        # --------------------------------------------------------------
+        # wardsoar-core (cross-platform) — same modules as before the
+        # refactor but reachable through the new canonical paths.
+        # --------------------------------------------------------------
+        "wardsoar",
+        "wardsoar.core",
+        "wardsoar.core.config",
+        "wardsoar.core.models",
+        "wardsoar.core.logger",
+        "wardsoar.core.watcher",
+        "wardsoar.core.alert_queue",
+        "wardsoar.core.filter",
+        "wardsoar.core.deduplicator",
+        "wardsoar.core.prescorer",
+        "wardsoar.core.virustotal",
+        "wardsoar.core.baseline",
+        "wardsoar.core.analyzer",
+        "wardsoar.core.decision_cache",
+        "wardsoar.core.responder",
+        "wardsoar.core.rollback",
+        "wardsoar.core.rule_manager",
+        "wardsoar.core.forensic_report",
+        "wardsoar.core.notifier",
+        "wardsoar.core.metrics",
+        "wardsoar.core.change_manager",
+        "wardsoar.core.replay",
+        "wardsoar.core.trusted_temp",
+        "wardsoar.core.prescorer_feedback",
+        "wardsoar.core.vt_cache",
+        "wardsoar.core.asn_enricher",
+        "wardsoar.core.suspect_asns",
+        "wardsoar.core.known_bad_actors",
+        "wardsoar.core.cdn_allowlist",
+        "wardsoar.core.netgate_audit",
+        "wardsoar.core.netgate_tamper",
+        "wardsoar.core.netgate_custom_rules",
+        "wardsoar.core.netgate_apply",
+        "wardsoar.core.alert_enrichment",
+        "wardsoar.core.user_false_positives",
+        "wardsoar.core.ip_enrichment",
+        "wardsoar.core.api_keys_registry",
+        "wardsoar.core.alerts_stats",
+        "wardsoar.core.bootstrap_checklist",
+        "wardsoar.core.history_rotator",
+        "wardsoar.core.manual_reviews",
+        "wardsoar.core.netgate_reset",
+        "wardsoar.core.single_instance",
+        # intel clients
+        "wardsoar.core.intel",
+        "wardsoar.core.intel.abuseipdb",
+        "wardsoar.core.intel.alienvault_otx",
+        "wardsoar.core.intel.base",
+        "wardsoar.core.intel.blocklist_de",
+        "wardsoar.core.intel.censys_client",
+        "wardsoar.core.intel.feodo_tracker",
+        "wardsoar.core.intel.firehol",
+        "wardsoar.core.intel.greynoise",
+        "wardsoar.core.intel.honeypot",
+        "wardsoar.core.intel.http_client_base",
+        "wardsoar.core.intel.ipinfo_pro",
+        "wardsoar.core.intel.manager",
+        "wardsoar.core.intel.securitytrails",
+        "wardsoar.core.intel.shodan_client",
+        "wardsoar.core.intel.spamhaus_drop",
+        "wardsoar.core.intel.threatfox",
+        "wardsoar.core.intel.urlhaus",
+        "wardsoar.core.intel.virustotal_client",
+        "wardsoar.core.intel.xforce",
+        # remote agents (pfSense over SSH, future Virus Sniff agent)
+        "wardsoar.core.remote_agents",
+        "wardsoar.core.remote_agents.pfsense_ssh",
+        "wardsoar.core.remote_agents.pfsense_aliastable",
+        "wardsoar.core.remote_agents.pfsense_alias_migrate",
+        "wardsoar.core.remote_agents.pfsense_suricata_tune",
+        "wardsoar.core.remote_agents.ssh_streamer",
+        # --------------------------------------------------------------
+        # wardsoar-pc (Windows-only desktop stack)
+        # --------------------------------------------------------------
+        "wardsoar.pc",
+        "wardsoar.pc.main",
+        "wardsoar.pc.collector",
+        "wardsoar.pc.forensics",
+        "wardsoar.pc.healthcheck",
+        "wardsoar.pc.process_risk",
+        "wardsoar.pc.process_risk_cache",
+        "wardsoar.pc.process_snapshot_buffer",
+        "wardsoar.pc.svchost_resolver",
+        "wardsoar.pc.sysmon_events",
+        "wardsoar.pc.sysmon_installer",
+        "wardsoar.pc.sysmon_probe",
+        "wardsoar.pc.win_paths",
         # Phase 3 — local AV cascade
-        "src.local_av",
-        "src.local_av.defender",
-        "src.local_av.yara_scanner",
-        "src.local_av.orchestrator",
+        "wardsoar.pc.local_av",
+        "wardsoar.pc.local_av.defender",
+        "wardsoar.pc.local_av.orchestrator",
+        "wardsoar.pc.local_av.yara_scanner",
         # Phases 5 + 6 — forensic acquisition and deep analysis
-        "src.forensic",
-        "src.forensic.acquisition",
-        "src.forensic.attack_mapper",
-        "src.forensic.deep_orchestrator",
-        "src.forensic.encryption",
-        "src.forensic.export",
-        "src.forensic.ioc_extractor",
-        "src.forensic.manifest",
-        "src.forensic.memory",
-        "src.forensic.orchestrator",
-        "src.forensic.report_pdf",
-        "src.forensic.storage",
-        "src.forensic.timeline",
-        "src.ui",
-        "src.ui.app",
-        "src.ui.engine_bridge",
-        "src.ui.views",
-        "src.ui.views.dashboard",
-        "src.ui.views.alerts",
-        "src.ui.views.activity_view",
-        "src.ui.views.config_view",
-        "src.ui.views.keys_view",
-        "src.ui.views.replay_view",
-        "src.ui.views.netgate",
-        "src.ssh_streamer",
+        "wardsoar.pc.forensic",
+        "wardsoar.pc.forensic.acquisition",
+        "wardsoar.pc.forensic.attack_mapper",
+        "wardsoar.pc.forensic.deep_orchestrator",
+        "wardsoar.pc.forensic.encryption",
+        "wardsoar.pc.forensic.export",
+        "wardsoar.pc.forensic.ioc_extractor",
+        "wardsoar.pc.forensic.manifest",
+        "wardsoar.pc.forensic.memory",
+        "wardsoar.pc.forensic.orchestrator",
+        "wardsoar.pc.forensic.report_pdf",
+        "wardsoar.pc.forensic.storage",
+        "wardsoar.pc.forensic.timeline",
+        # UI (PySide6 + qfluentwidgets)
+        "wardsoar.pc.ui",
+        "wardsoar.pc.ui.app",
+        "wardsoar.pc.ui.engine_bridge",
+        "wardsoar.pc.ui.setup_wizard",
+        "wardsoar.pc.ui.views",
+        "wardsoar.pc.ui.views.about_dialog",
+        "wardsoar.pc.ui.views.activity_view",
+        "wardsoar.pc.ui.views.alert_detail",
+        "wardsoar.pc.ui.views.alerts",
+        "wardsoar.pc.ui.views.config_view",
+        "wardsoar.pc.ui.views.dashboard",
+        "wardsoar.pc.ui.views.keys_view",
+        "wardsoar.pc.ui.views.netgate",
+        "wardsoar.pc.ui.views.replay_view",
+        # --------------------------------------------------------------
         # Third-party with dynamic imports
+        # --------------------------------------------------------------
         "anthropic",
         "asyncssh",
         "httpx",

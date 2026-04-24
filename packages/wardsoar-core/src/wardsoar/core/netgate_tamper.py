@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.netgate_tamper")
 

@@ -43,7 +43,7 @@ from qfluentwidgets import (
 )
 
 from wardsoar.core.config import get_app_dir, get_data_dir, load_config, load_env, load_whitelist
-from src.main import Pipeline
+from wardsoar.pc.main import Pipeline
 from wardsoar.core.remote_agents.ssh_streamer import SshStreamer
 from wardsoar.pc.ui.engine_bridge import EngineWorker
 from wardsoar.pc.ui.views.activity_view import ActivityView
@@ -327,7 +327,7 @@ class MainWindow(FluentWindow):  # type: ignore[misc]
         # version / copyright / license block. ``selectable=False``
         # keeps the navigation highlight on whatever the operator was
         # viewing when they clicked About.
-        from src.ui.views.about_dialog import show_about_dialog
+        from wardsoar.pc.ui.views.about_dialog import show_about_dialog
 
         self.navigationInterface.addItem(
             routeKey="about",
@@ -398,7 +398,7 @@ class WardApp:
         # must stay alive for the lifetime of the process, hence the
         # self-reference on ``self``. See src/single_instance.py for
         # the fail-open semantics when pywin32 is not installed.
-        from src.single_instance import SingleInstanceGuard, activate_existing_window
+        from wardsoar.core.single_instance import SingleInstanceGuard, activate_existing_window
 
         self._single_instance_guard = SingleInstanceGuard()
         if self._single_instance_guard.already_running():
@@ -429,8 +429,8 @@ class WardApp:
 
         # Launch setup wizard on first run (before load_config creates defaults)
         if first_run:
-            from src.config import get_data_dir
-            from src.ui.setup_wizard import SetupWizard
+            from wardsoar.core.config import get_data_dir
+            from wardsoar.pc.ui.setup_wizard import SetupWizard
 
             wizard = SetupWizard(data_dir=get_data_dir())
             if wizard.exec() != SetupWizard.DialogCode.Accepted:
@@ -587,7 +587,7 @@ class WardApp:
             # months land in monthly archives that the alerts view
             # exposes via its "Archives" menu.
             try:
-                from src.history_rotator import rotate_if_needed
+                from wardsoar.core.history_rotator import rotate_if_needed
 
                 rotate_if_needed(self._engine.history_path)
             except Exception:  # noqa: BLE001 — rotation is best-effort
@@ -603,8 +603,8 @@ class WardApp:
             # not stall the UI; the rest paginates via "Load older".
             history = self._engine.load_alert_history(limit=200)
             try:
-                from src.config import get_data_dir
-                from src.manual_reviews import (
+                from wardsoar.core.config import get_data_dir
+                from wardsoar.core.manual_reviews import (
                     default_store_path,
                     load_reviews,
                     merge_into_history,
@@ -902,7 +902,7 @@ class WardApp:
         when the engine has not started — the caller uses that value
         to repaint the dashboard after a refused escalation.
         """
-        from src.models import WardMode
+        from wardsoar.core.models import WardMode
 
         if not hasattr(self, "_engine"):
             return WardMode.MONITOR
@@ -963,7 +963,7 @@ class WardApp:
 
         The operator gets a toast regardless of outcome.
         """
-        from src.user_false_positives import append_sid
+        from wardsoar.core.user_false_positives import append_sid
 
         ok, message = append_sid(sid, signature=signature)
         alerts_view = self._window._alerts
@@ -995,13 +995,13 @@ class WardApp:
         Alert Detail view is then refreshed to show a new
         "Manual review" block on the target alert.
         """
-        from src.config import get_data_dir
-        from src.manual_reviews import (
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.manual_reviews import (
             append_review,
             default_store_path,
             new_review,
         )
-        from src.ui.views.alerts import ManualReviewDialog
+        from wardsoar.pc.ui.views.alerts import ManualReviewDialog
 
         dialog = ManualReviewDialog(record, parent=self._window)
 
@@ -1090,7 +1090,7 @@ class WardApp:
         import os
         import subprocess
 
-        from src.config import get_data_dir
+        from wardsoar.core.config import get_data_dir
 
         record_id = (record.get("_full") or {}).get("record_id") or record.get("record_id")
         evidence_root = get_data_dir() / "evidence"
@@ -1123,7 +1123,7 @@ class WardApp:
 
         from qfluentwidgets import MessageBox
 
-        from src.models import WardMode
+        from wardsoar.core.models import WardMode
 
         resolved = WardMode.parse(new_mode)
 

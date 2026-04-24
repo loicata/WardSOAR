@@ -28,7 +28,7 @@ def overlay_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Pat
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
-    monkeypatch.setattr("src.config.get_data_dir", lambda: data_dir)
+    monkeypatch.setattr("wardsoar.core.config.get_data_dir", lambda: data_dir)
     yield data_dir / "config" / "known_false_positives_user.yaml"
 
 

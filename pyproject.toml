@@ -25,14 +25,22 @@ dependencies = [
 ]
 
 [project.gui-scripts]
-wardsoar = "src.main:main"
+wardsoar = "wardsoar.pc.main:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.dynamic]
-version = { attr = "src.__version__" }
+# Version flows from the PC package (which ships the user-facing MSI).
+# Core and pc move together for releases today; a split can happen
+# later without breaking the top-level ``wardsoar`` meta-distribution.
+version = { attr = "wardsoar.pc.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["packages/wardsoar-pc/src", "packages/wardsoar-core/src"]
+include = ["wardsoar*"]
+namespaces = true
 
 [tool.black]
 line-length = 100

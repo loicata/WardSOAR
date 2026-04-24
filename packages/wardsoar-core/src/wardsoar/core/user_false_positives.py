@@ -44,7 +44,7 @@ def user_overlay_path() -> Path:
     Isolated from imports so that callers who monkey-patch
     ``get_data_dir`` in tests get the patched version.
     """
-    from src.config import get_data_dir
+    from wardsoar.core.config import get_data_dir
 
     return get_data_dir() / "config" / "known_false_positives_user.yaml"
 

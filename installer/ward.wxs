@@ -154,8 +154,10 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Icon for Add/Remove Programs -->
-    <Icon Id="AppIcon" SourceFile="src\ui\assets\ward.ico" />
+    <!-- Icon for Add/Remove Programs. Path updated 2026-04-24 after
+         the monorepo refactor moved src/ui/assets into
+         packages/wardsoar-pc/src/wardsoar/pc/ui/assets. -->
+    <Icon Id="AppIcon" SourceFile="packages\wardsoar-pc\src\wardsoar\pc\ui\assets\ward.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon" />
     <Property Id="ARPHELPLINK" Value="https://github.com/loicata/WardSOAR" />
 

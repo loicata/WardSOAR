@@ -24,7 +24,26 @@ from wardsoar.pc.sysmon_installer import (
 
 
 @pytest.fixture
-def with_installed_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _real_repo_data_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Override the conftest's ``WARDSOAR_DATA_DIR`` sandbox for tests
+    that specifically verify the on-disk install-sysmon.ps1 resolution.
+
+    The repo-level conftest isolates every test from the operator's
+    data directory by pointing ``WARDSOAR_DATA_DIR`` at a pytest
+    tmp_path. That is what we want almost everywhere — except for
+    these three tests which assert that ``find_install_script()``
+    actually locates the PowerShell file shipped inside the repo at
+    ``<repo>/scripts/install-sysmon.ps1``.
+    """
+    monkeypatch.delenv("WARDSOAR_DATA_DIR", raising=False)
+
+
+@pytest.fixture
+def with_installed_scripts(
+    _real_repo_data_dir: None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
     """Drop a fake install-sysmon.ps1 where ``find_install_script`` expects it.
 
     The default resolver first looks under ``<repo>/scripts/`` — which
@@ -38,13 +57,15 @@ def with_installed_scripts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 class TestFindInstallScript:
-    def test_repo_script_is_found(self) -> None:
+    def test_repo_script_is_found(self, _real_repo_data_dir: None) -> None:
         """The repo ships the script, so find_install_script() returns it."""
         result = find_install_script()
         assert result is not None
         assert result.name == "install-sysmon.ps1"
 
-    def test_describe_script_location_returns_path(self) -> None:
+    def test_describe_script_location_returns_path(
+        self, _real_repo_data_dir: None
+    ) -> None:
         location = describe_script_location()
         assert "install-sysmon.ps1" in location
 

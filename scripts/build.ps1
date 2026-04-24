@@ -77,20 +77,25 @@ if (-not $SkipMSI) {
     Write-Host "  WiX UI extension: OK" -ForegroundColor Green
 }
 
-# Check icon
-if (-not (Test-Path "src\ui\assets\ward.ico")) {
-    Write-Host "ERROR: Application icon not found at src\ui\assets\ward.ico" -ForegroundColor Red
+# Check icon (post monorepo refactor: moved into wardsoar-pc package)
+$iconPath = "packages\wardsoar-pc\src\wardsoar\pc\ui\assets\ward.ico"
+if (-not (Test-Path $iconPath)) {
+    Write-Host "ERROR: Application icon not found at $iconPath" -ForegroundColor Red
     exit 1
 }
 Write-Host "  Icon: OK" -ForegroundColor Green
 
-# Read version
+# Read version — source of truth now lives in the wardsoar-pc package.
+# The legacy src/__init__.py was removed during the 2026-04-24 monorepo
+# refactor; the MSI-shipping package (wardsoar.pc) carries the release
+# version, which also feeds the top-level pyproject.toml.
 if ($Version -eq "") {
-    $initContent = Get-Content "src\__init__.py" -Raw
+    $initPath = "packages\wardsoar-pc\src\wardsoar\pc\__init__.py"
+    $initContent = Get-Content $initPath -Raw
     if ($initContent -match '__version__\s*=\s*"([^"]+)"') {
         $Version = $Matches[1]
     } else {
-        Write-Host "ERROR: Could not read version from src/__init__.py" -ForegroundColor Red
+        Write-Host "ERROR: Could not read version from $initPath" -ForegroundColor Red
         exit 1
     }
 }

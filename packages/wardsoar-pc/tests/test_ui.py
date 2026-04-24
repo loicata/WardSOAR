@@ -259,7 +259,7 @@ class TestActivityViewEventShape:
         dispatcher's synchronous emissions."""
         from unittest.mock import MagicMock
 
-        from src.ui.engine_bridge import EngineWorker
+        from wardsoar.pc.ui.engine_bridge import EngineWorker
 
         pipeline = MagicMock()
         pipeline.process_alert = MagicMock()
@@ -298,7 +298,7 @@ class TestActivityViewEventShape:
         import asyncio
         from unittest.mock import MagicMock
 
-        from src.ui.engine_bridge import EngineWorker
+        from wardsoar.pc.ui.engine_bridge import EngineWorker
 
         worker = EngineWorker(
             pipeline=MagicMock(),
@@ -346,7 +346,7 @@ class TestActivityViewEventShape:
         test?), the view must still format them correctly with
         both endpoints + signature + reason so no stale mapping
         gets silently committed."""
-        from src.ui.views.activity_view import ActivityView
+        from wardsoar.pc.ui.views.activity_view import ActivityView
 
         view = ActivityView()
         detail = (
@@ -614,7 +614,7 @@ class TestNetgateView:
         Apply immediately — no second audit run required."""
         from PySide6.QtCore import Qt
 
-        from src.ui.views.netgate import NetgateView
+        from wardsoar.pc.ui.views.netgate import NetgateView
 
         view = NetgateView()
         view.set_applicable_fix_ids({"suricata.rules_loaded", "pf.alias_persistent"})
@@ -654,7 +654,7 @@ class TestNetgateView:
     def test_select_all_and_select_none_update_button(self, qapp: QApplication) -> None:
         from PySide6.QtCore import Qt
 
-        from src.ui.views.netgate import NetgateView
+        from wardsoar.pc.ui.views.netgate import NetgateView
 
         view = NetgateView()
         view.set_applicable_fix_ids({"suricata.rules_loaded", "pf.alias_persistent"})
@@ -685,7 +685,7 @@ class TestNetgateView:
         ``pf.alias_persistent`` row stayed orange even though the
         migration had genuinely converted host → urltable on pfSense.
         """
-        from src.ui.views.netgate import NetgateView
+        from wardsoar.pc.ui.views.netgate import NetgateView
 
         view = NetgateView()
         view.set_applicable_fix_ids({"pf.alias_persistent"})
@@ -723,7 +723,7 @@ class TestNetgateView:
     def test_apply_results_all_failed_does_not_auto_refresh(self, qapp: QApplication) -> None:
         """Mirror test: no point re-running the audit when nothing
         succeeded — the state has not changed."""
-        from src.ui.views.netgate import NetgateView
+        from wardsoar.pc.ui.views.netgate import NetgateView
 
         view = NetgateView()
         view.set_applicable_fix_ids({"pf.alias_persistent"})

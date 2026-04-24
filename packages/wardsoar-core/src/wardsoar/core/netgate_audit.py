@@ -46,8 +46,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from src.config import AppConfig
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.config import AppConfig
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.netgate_audit")
 

@@ -189,7 +189,7 @@ class PfSenseSSH:
             logger.error("Invalid IP address, refusing pfctl command: %s", ip)
             return False
 
-        from src.pfsense_aliastable import PersistentBlocklist
+        from wardsoar.core.remote_agents.pfsense_aliastable import PersistentBlocklist
 
         async with self._write_lock:
             result = await PersistentBlocklist(self, table_name=self._table).add(ip)
@@ -221,7 +221,7 @@ class PfSenseSSH:
             logger.error("Invalid IP address, refusing pfctl command: %s", ip)
             return False
 
-        from src.pfsense_aliastable import PersistentBlocklist
+        from wardsoar.core.remote_agents.pfsense_aliastable import PersistentBlocklist
 
         async with self._write_lock:
             result = await PersistentBlocklist(self, table_name=self._table).remove(ip)
@@ -253,7 +253,7 @@ class PfSenseSSH:
         if not self._validate_ip(ip):
             return False
 
-        from src.pfsense_aliastable import PersistentBlocklist
+        from wardsoar.core.remote_agents.pfsense_aliastable import PersistentBlocklist
 
         entries = await PersistentBlocklist(self, table_name=self._table).read_entries()
         return ip in entries
@@ -269,7 +269,7 @@ class PfSenseSSH:
         Returns:
             List of IP / CIDR strings.
         """
-        from src.pfsense_aliastable import PersistentBlocklist
+        from wardsoar.core.remote_agents.pfsense_aliastable import PersistentBlocklist
 
         return await PersistentBlocklist(self, table_name=self._table).read_entries()
 

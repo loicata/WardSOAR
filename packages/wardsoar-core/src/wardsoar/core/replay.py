@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from wardsoar.core.models import DecisionRecord, ThreatVerdict
 
 if TYPE_CHECKING:
-    from src.analyzer import ThreatAnalyzer
+    from wardsoar.core.analyzer import ThreatAnalyzer
 
 logger = logging.getLogger("ward_soar.replay")
 

@@ -496,8 +496,8 @@ class AlertDetailView(QWidget):
         Called twice by :meth:`_populate_ip_ownership` \u2014 once for
         the source IP, once for the destination IP.
         """
-        from src.api_keys_registry import MANUAL_CHECKS
-        from src.ip_enrichment import iso_to_human_delta
+        from wardsoar.core.api_keys_registry import MANUAL_CHECKS
+        from wardsoar.core.ip_enrichment import iso_to_human_delta
 
         layout = self._sec_ip_ownership.content_layout
 

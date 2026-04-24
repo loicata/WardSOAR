@@ -228,8 +228,8 @@ class SetupWizard(QDialog):
         """
         from PySide6.QtCore import QTimer
 
-        from src.sysmon_installer import launch_install_script
-        from src.sysmon_probe import probe_sysmon
+        from wardsoar.pc.sysmon_installer import launch_install_script
+        from wardsoar.pc.sysmon_probe import probe_sysmon
 
         page, layout = self._scrollable_page()
         layout.addSpacing(20)

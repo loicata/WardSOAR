@@ -432,7 +432,7 @@ def build_default_manager(
         encryptor = None
         tag = "plaintext"
     else:
-        from src.forensic.encryption import try_build_encryptor
+        from wardsoar.pc.forensic.encryption import try_build_encryptor
 
         encryptor = try_build_encryptor(scope=encryption_scope)
         tag = f"dpapi-{encryption_scope}" if encryptor else "plaintext"

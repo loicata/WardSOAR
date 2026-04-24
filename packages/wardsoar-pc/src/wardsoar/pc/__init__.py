@@ -3,8 +3,9 @@
 Everything in this package assumes a Windows host: pywin32, WMI, DPAPI,
 Sysmon, YARA, PySide6. For cross-platform code, see ``wardsoar.core``.
 
-The package is currently a skeleton. Modules will be migrated in from
-the legacy ``src/`` layout in the upcoming refactor phases.
+This is the package the MSI installer ships. The version here drives
+the top-level meta-distribution's ``__version__`` (see the root
+``pyproject.toml``) and the WiX product version.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.22.7"

@@ -25,8 +25,8 @@ from wardsoar.core.asn_enricher import AsnInfo
 from wardsoar.core.cdn_allowlist import CdnAllowlist, CdnMatch
 from wardsoar.core.config import WhitelistConfig
 from wardsoar.core.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict
-from src.pfsense_ssh import BlockTracker, PfSenseSSH
-from src.responder import ThreatResponder
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.responder import ThreatResponder
 
 SAMPLE_YAML = """\
 schema_version: "1"

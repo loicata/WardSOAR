@@ -40,11 +40,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.config import WhitelistConfig
-from src.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict, WardMode
-from src.pfsense_ssh import BlockTracker, PfSenseSSH
-from src.responder import ThreatResponder
-from src.trusted_temp import TrustedTempRegistry
+from wardsoar.core.config import WhitelistConfig
+from wardsoar.core.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict, WardMode
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.responder import ThreatResponder
+from wardsoar.core.trusted_temp import TrustedTempRegistry
 
 # ---------------------------------------------------------------------------
 # Shared helpers

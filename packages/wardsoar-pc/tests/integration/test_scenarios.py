@@ -34,9 +34,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.config import AppConfig, WhitelistConfig
-from src.main import FilteredResult, Pipeline
-from src.models import (
+from wardsoar.core.config import AppConfig, WhitelistConfig
+from wardsoar.pc.main import FilteredResult, Pipeline
+from wardsoar.core.models import (
     BlockAction,
     DecisionRecord,
     ForensicResult,

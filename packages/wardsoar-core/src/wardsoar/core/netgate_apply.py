@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.netgate_apply")
 
@@ -257,7 +257,7 @@ async def _apply_migrate_alias_to_urltable(ssh: "PfSenseSSH") -> tuple[bool, str
     # Imported lazily so the mere presence of the handler spec in the
     # registry does not pull the migration orchestrator into every
     # Applier client (tests exercise handlers without SSH).
-    from src.pfsense_alias_migrate import migrate_alias_to_urltable
+    from wardsoar.core.remote_agents.pfsense_alias_migrate import migrate_alias_to_urltable
 
     try:
         result = await migrate_alias_to_urltable(ssh)
@@ -294,7 +294,7 @@ async def _apply_suricata_runmode_workers(ssh: "PfSenseSSH") -> tuple[bool, str]
     Phase 7h — the change survives every GUI save, reboot and
     package upgrade.
     """
-    from src.pfsense_suricata_tune import apply_suricata_runmode
+    from wardsoar.core.remote_agents.pfsense_suricata_tune import apply_suricata_runmode
 
     try:
         result = await apply_suricata_runmode(ssh, target="workers")

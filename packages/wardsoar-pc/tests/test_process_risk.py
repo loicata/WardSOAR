@@ -565,7 +565,7 @@ class TestVTCacheSignal:
     def test_cached_malicious_pushes_verdict_to_malicious(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src.models import VirusTotalResult
+        from wardsoar.core.models import VirusTotalResult
 
         exe = tmp_path / "payload.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"fake exe bytes" * 20)
@@ -588,7 +588,7 @@ class TestVTCacheSignal:
                 threat_labels=["trojan.generic"],
             )
 
-        monkeypatch.setattr("src.vt_cache.VTCache.lookup", fake_lookup)
+        monkeypatch.setattr("wardsoar.core.vt_cache.VTCache.lookup", fake_lookup)
 
         result = scan_process(5555)
 
@@ -598,7 +598,7 @@ class TestVTCacheSignal:
     def test_cached_clean_downgrades_score(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
     ) -> None:
-        from src.models import VirusTotalResult
+        from wardsoar.core.models import VirusTotalResult
 
         exe = tmp_path / "custom.exe"  # type: ignore[attr-defined]
         exe.write_bytes(b"legit payload" * 10)
@@ -620,7 +620,7 @@ class TestVTCacheSignal:
                 is_malicious=False,
             )
 
-        monkeypatch.setattr("src.vt_cache.VTCache.lookup", fake_clean)
+        monkeypatch.setattr("wardsoar.core.vt_cache.VTCache.lookup", fake_clean)
 
         result = scan_process(6666)
 
@@ -646,7 +646,7 @@ class TestVTCacheSignal:
             called.append(h)
             return None
 
-        monkeypatch.setattr("src.vt_cache.VTCache.lookup", spy_lookup)
+        monkeypatch.setattr("wardsoar.core.vt_cache.VTCache.lookup", spy_lookup)
 
         scan_process(7777)
 
@@ -666,7 +666,7 @@ class TestVTCacheSignal:
         )
         _stub_signature(monkeypatch, "unsigned", "")
 
-        monkeypatch.setattr("src.vt_cache.VTCache.lookup", lambda self, h: None)
+        monkeypatch.setattr("wardsoar.core.vt_cache.VTCache.lookup", lambda self, h: None)
 
         result = scan_process(8888)
 

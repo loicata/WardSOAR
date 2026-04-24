@@ -21,7 +21,7 @@ from wardsoar.core.manual_reviews import (
     merge_into_history,
     new_review,
 )
-from src.ui.views.alerts import ManualReviewDialog
+from wardsoar.pc.ui.views.alerts import ManualReviewDialog
 
 # ---------------------------------------------------------------------------
 # Storage layer

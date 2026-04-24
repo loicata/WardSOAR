@@ -62,7 +62,7 @@ class AlertFilter:
             # contamination alerts (ipinfo.io + torproject.org) slipped
             # past stage 1 to be caught later by dedup / cache / prescorer
             # at much greater cost.
-            from src.config import get_bundle_dir
+            from wardsoar.core.config import get_bundle_dir
 
             raw_path = str(config.get("config_file", "config/known_false_positives.yaml"))
             candidate = Path(raw_path)
@@ -83,7 +83,7 @@ class AlertFilter:
             # runtime without modifying the read-only bundled file.
             # It never removes entries; hand-edit the YAML for that.
             try:
-                from src.user_false_positives import user_overlay_path
+                from wardsoar.core.user_false_positives import user_overlay_path
 
                 overlay = user_overlay_path()
                 if overlay.is_file():

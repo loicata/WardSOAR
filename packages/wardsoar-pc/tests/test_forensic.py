@@ -65,7 +65,7 @@ class TestDpapiEncryption:
 
     def test_try_build_encryptor_returns_something_on_windows(self) -> None:
         """On Windows the factory returns a working encryptor; elsewhere None."""
-        from src.forensic.encryption import try_build_encryptor
+        from wardsoar.pc.forensic.encryption import try_build_encryptor
 
         encryptor = try_build_encryptor()
         if os.name == "nt":
@@ -76,7 +76,7 @@ class TestDpapiEncryption:
 
     @pytest.mark.skipif(os.name != "nt", reason="DPAPI is Windows-only")
     def test_round_trip(self) -> None:
-        from src.forensic.encryption import DpapiEncryptor
+        from wardsoar.pc.forensic.encryption import DpapiEncryptor
 
         enc = DpapiEncryptor()
         blob = enc.encrypt(b"WardSOAR secret payload")
@@ -85,7 +85,7 @@ class TestDpapiEncryption:
 
     @pytest.mark.skipif(os.name != "nt", reason="DPAPI is Windows-only")
     def test_corrupt_blob_raises(self) -> None:
-        from src.forensic.encryption import DpapiEncryptor, EncryptionUnavailable
+        from wardsoar.pc.forensic.encryption import DpapiEncryptor, EncryptionUnavailable
 
         enc = DpapiEncryptor()
         with pytest.raises(EncryptionUnavailable):
@@ -133,7 +133,7 @@ class TestProtectedStorage:
 
     @pytest.mark.skipif(os.name != "nt", reason="DPAPI is Windows-only")
     def test_write_and_seal_encrypted(self, tmp_path: Path) -> None:
-        from src.forensic.encryption import try_build_encryptor
+        from wardsoar.pc.forensic.encryption import try_build_encryptor
 
         encryptor = try_build_encryptor()
         storage = ProtectedEvidenceStorage(

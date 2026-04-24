@@ -59,7 +59,7 @@ from wardsoar.core.remote_agents.pfsense_aliastable import (
 )
 
 if TYPE_CHECKING:
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.pfsense_alias_migrate")
 

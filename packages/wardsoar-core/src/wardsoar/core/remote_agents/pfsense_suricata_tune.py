@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.pfsense_suricata_tune")
 

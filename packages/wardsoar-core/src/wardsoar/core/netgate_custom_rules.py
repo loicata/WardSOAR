@@ -49,8 +49,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Iterable, Optional
 
 if TYPE_CHECKING:
-    from src.known_bad_actors import KnownActorsRegistry
-    from src.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.known_bad_actors import KnownActorsRegistry
+    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
 
 logger = logging.getLogger("ward_soar.netgate_custom_rules")
 

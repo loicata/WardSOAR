@@ -531,7 +531,7 @@ class ForensicAnalyzer:
         the forensic flow — empty set falls through to the next layer.
         """
         try:
-            from src.sysmon_events import find_pids_for_flow
+            from wardsoar.pc.sysmon_events import find_pids_for_flow
 
             hits = await find_pids_for_flow(flow, alert_time)
             return {hit.pid for hit in hits}
@@ -557,8 +557,8 @@ class ForensicAnalyzer:
         overall verdict. Scoring is strictly local (no VT, no
         network) so it is cheap enough to run on every PID.
         """
-        from src.process_risk import scan_process
-        from src.svchost_resolver import resolve_services_for_pid
+        from wardsoar.pc.process_risk import scan_process
+        from wardsoar.pc.svchost_resolver import resolve_services_for_pid
 
         processes: list[dict[str, Any]] = []
         for pid in pids:
