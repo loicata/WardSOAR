@@ -175,7 +175,7 @@ async def test_scenario_1_true_positive_high_confidence() -> None:
         ]
     )
 
-    with patch("src.main.log_decision"):
+    with patch("wardsoar.pc.main.log_decision"):
         record = await pipeline.process_alert(_make_alert())
 
     assert isinstance(record, DecisionRecord)
@@ -273,7 +273,7 @@ async def test_scenario_4_inconclusive_verdict_no_block() -> None:
         ]
     )
 
-    with patch("src.main.log_decision"):
+    with patch("wardsoar.pc.main.log_decision"):
         record = await pipeline.process_alert(_make_alert())
 
     assert isinstance(record, DecisionRecord)
@@ -315,7 +315,7 @@ async def test_scenario_5_whitelist_blocks_responder_action() -> None:
         ]
     )
 
-    with patch("src.main.log_decision"):
+    with patch("wardsoar.pc.main.log_decision"):
         record = await pipeline.process_alert(_make_alert())
 
     assert isinstance(record, DecisionRecord)
@@ -366,7 +366,7 @@ async def test_scenario_6_duplicate_flood_only_one_analysis() -> None:
     pipeline._responder.respond = AsyncMock(return_value=[])  # type: ignore[method-assign]
 
     results = []
-    with patch("src.main.log_decision"):
+    with patch("wardsoar.pc.main.log_decision"):
         for _ in range(50):
             results.append(await pipeline.process_alert(_make_alert()))
 
@@ -419,7 +419,7 @@ async def test_scenario_7_analyzer_crash_is_fail_safe() -> None:
         ]
     )
 
-    with patch("src.main.log_decision") as mock_log:
+    with patch("wardsoar.pc.main.log_decision") as mock_log:
         record = await pipeline.process_alert(_make_alert())
 
     assert isinstance(record, DecisionRecord)
@@ -484,7 +484,7 @@ async def test_scenario_8_rate_limit_stops_excess_blocks() -> None:
 
     blocked = 0
     rate_limited = 0
-    with patch("src.main.log_decision"):
+    with patch("wardsoar.pc.main.log_decision"):
         # 25 distinct source IPs so dedup/cache don't short-circuit.
         for i in range(25):
             record = await pipeline.process_alert(_make_alert(src_ip=f"203.0.113.{100 + i}"))

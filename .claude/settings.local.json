@@ -625,7 +625,16 @@
       "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-pc/src/)",
       "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-pc/src/wardsoar/pc/)",
       "Bash(sed -i 's|from wardsoar\\\\.core\\\\.main import|from src.main import|g' packages/wardsoar-pc/src/wardsoar/pc/ui/app.py packages/wardsoar-pc/src/wardsoar/pc/ui/engine_bridge.py)",
-      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/)"
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/)",
+      "Bash(grep -v \"^src/main.py$\\\\|^src/__init__.py$\")",
+      "Bash(cp src/main.py packages/wardsoar-pc/src/wardsoar/pc/main.py)",
+      "Bash(sed -i 's|^from src\\\\.__TRACKED_VAR__|from wardsoar.pc.__TRACKED_VAR__|g' packages/wardsoar-pc/src/wardsoar/pc/main.py done sed -i 's|^from src\\\\.forensic\\\\.|from wardsoar.pc.forensic.|g; s|^from src\\\\.local_av\\\\.|from wardsoar.pc.local_av.|g; s|^from src\\\\.ui\\\\.|from wardsoar.pc.ui.|g' packages/wardsoar-pc/src/wardsoar/pc/main.py sed -i 's|^from src\\\\.pfsense_|from wardsoar.core.remote_agents.pfsense_|g; s|^from src\\\\.ssh_streamer|from wardsoar.core.remote_agents.ssh_streamer|g; s|^from src\\\\.|from wardsoar.core.|g; s|^from src import win_paths|from wardsoar.pc import win_paths|g; s|^from src import \\\\\\([a-z_]*\\\\\\)|from wardsoar.core import \\\\1|g' packages/wardsoar-pc/src/wardsoar/pc/main.py)",
+      "Bash(sed -i 's|^from wardsoar\\\\.core\\\\.forensic |from wardsoar.pc.forensic |g; s|^from wardsoar\\\\.core\\\\.local_av |from wardsoar.pc.local_av |g; s|^from wardsoar\\\\.core\\\\.ui |from wardsoar.pc.ui |g' packages/wardsoar-pc/src/wardsoar/pc/main.py)",
+      "Bash(mv tests/test_main.py packages/wardsoar-pc/tests/test_main.py)",
+      "Bash(sed -i 's|^from src\\\\.main|from wardsoar.pc.main|g; s|^from src\\\\.pfsense_|from wardsoar.core.remote_agents.pfsense_|g; s|^from src\\\\.forensic\\\\.|from wardsoar.pc.forensic.|g; s|^from src\\\\.local_av\\\\.|from wardsoar.pc.local_av.|g; s|^from src\\\\.ui\\\\.|from wardsoar.pc.ui.|g; s|^from src\\\\.|from wardsoar.core.|g; s|\"src\\\\.main|\"wardsoar.pc.main|g; s|patch\\(\"src\\\\.main|patch\\(\"wardsoar.pc.main|g; s|patch\\(\"src\\\\.|patch\\(\"wardsoar.core.|g' packages/wardsoar-pc/tests/test_main.py)",
+      "Bash(sed -i 's|^from wardsoar\\\\.core\\\\.__TRACKED_VAR__|from wardsoar.pc.__TRACKED_VAR__|g; s|patch\\(\"wardsoar\\\\.core\\\\.__TRACKED_VAR__|patch\\(\"wardsoar.pc.__TRACKED_VAR__|g' packages/wardsoar-pc/tests/test_main.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/integration/test_scenarios.py::test_scenario_7_analyzer_crash_is_fail_safe -q)",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-pc/src/wardsoar/pc/main.py)"
     ]
   }
 }
