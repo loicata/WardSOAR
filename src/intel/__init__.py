@@ -1,17 +1,10 @@
-"""Intelligence feed package.
+"""Legacy shim for ``wardsoar.core.intel`` (and submodules).
 
-Each submodule implements one external intelligence source (a feed
-downloader, a HTTP API client, or a WHOIS service). Every source
-exposes the same simple interface via the :class:`FeedRegistry`
-base: ``refresh_if_stale()`` to pull the latest data, and
-``lookup_ip(ip)`` to check a single indicator against the in-memory
-index.
-
-The :class:`IntelManager` singleton owns every registry, schedules
-background refreshes, and exposes a synchronous ``query_all_for_ip``
-helper the alert pipeline uses to build the reputation rows.
+Re-exports the canonical package so ``from src.intel.X import Y``
+keeps working during the monorepo migration. Each submodule has its
+own sibling shim that re-exports its public symbols.
 """
 
-from src.intel.base import FeedEntry, FeedRegistry
+from __future__ import annotations
 
-__all__ = ["FeedEntry", "FeedRegistry"]
+from wardsoar.core.intel import *  # noqa: F401,F403

@@ -14,11 +14,11 @@ from typing import Any
 
 import pytest
 
-from src.intel.abuseipdb import AbuseIpDbClient
-from src.intel.alienvault_otx import AlienVaultOtxClient
-from src.intel.greynoise import GreyNoiseClient
-from src.intel.http_client_base import IpReputationCache, ReputationVerdict
-from src.intel.virustotal_client import VirusTotalClient
+from wardsoar.core.intel.abuseipdb import AbuseIpDbClient
+from wardsoar.core.intel.alienvault_otx import AlienVaultOtxClient
+from wardsoar.core.intel.greynoise import GreyNoiseClient
+from wardsoar.core.intel.http_client_base import IpReputationCache, ReputationVerdict
+from wardsoar.core.intel.virustotal_client import VirusTotalClient
 
 # ---------------------------------------------------------------------------
 # Cache

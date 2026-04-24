@@ -15,10 +15,10 @@ from typing import Any
 
 import pytest
 
-from src.intel.honeypot import ProjectHoneyPotClient, _reverse_ip, _visitor_type_label
-from src.intel.http_client_base import IpReputationCache
-from src.intel.ipinfo_pro import IpinfoProClient
-from src.intel.xforce import XForceClient
+from wardsoar.core.intel.honeypot import ProjectHoneyPotClient, _reverse_ip, _visitor_type_label
+from wardsoar.core.intel.http_client_base import IpReputationCache
+from wardsoar.core.intel.ipinfo_pro import IpinfoProClient
+from wardsoar.core.intel.xforce import XForceClient
 
 # ---------------------------------------------------------------------------
 # IBM X-Force

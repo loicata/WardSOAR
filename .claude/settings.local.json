@@ -588,7 +588,11 @@
       "Bash(.venv/Scripts/python.exe -m ruff check src/models.py src/config.py src/logger.py packages/wardsoar-core/src/ packages/wardsoar-core/tests/)",
       "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/)",
       "Bash(.venv/Scripts/python.exe -m mypy --strict src/models.py src/config.py src/logger.py)",
-      "Bash(.venv/Scripts/python.exe -m bandit -ll packages/wardsoar-core/src/wardsoar/core/)"
+      "Bash(.venv/Scripts/python.exe -m bandit -ll packages/wardsoar-core/src/wardsoar/core/)",
+      "Bash(.venv/Scripts/python.exe -c \"from src.intel.abuseipdb import AbuseIpDbClient; from src.intel.threatfox import ThreatFoxRegistry; from src.intel.http_client_base import IpReputationCache, ReputationVerdict; from src.intel.manager import IntelManager; print\\('shims resolve OK'\\)\")",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 src/intel/ packages/wardsoar-core/src/wardsoar/core/intel/ packages/wardsoar-core/tests/test_intel_*.py)",
+      "Bash(.venv/Scripts/python.exe -m ruff check src/intel/ packages/wardsoar-core/src/wardsoar/core/intel/ packages/wardsoar-core/tests/test_intel_*.py)",
+      "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/intel/)"
     ]
   }
 }

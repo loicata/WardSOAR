@@ -21,14 +21,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.intel.base import FeedEntry, FeedRegistry
-from src.intel.blocklist_de import BlocklistDeRegistry
-from src.intel.feodo_tracker import FeodoTrackerRegistry
-from src.intel.firehol import FireHolRegistry
-from src.intel.manager import IntelManager, QueryResult
-from src.intel.spamhaus_drop import SpamhausDropRegistry
-from src.intel.threatfox import ThreatFoxRegistry
-from src.intel.urlhaus import URLhausRegistry
+from wardsoar.core.intel.base import FeedEntry, FeedRegistry
+from wardsoar.core.intel.blocklist_de import BlocklistDeRegistry
+from wardsoar.core.intel.feodo_tracker import FeodoTrackerRegistry
+from wardsoar.core.intel.firehol import FireHolRegistry
+from wardsoar.core.intel.manager import IntelManager, QueryResult
+from wardsoar.core.intel.spamhaus_drop import SpamhausDropRegistry
+from wardsoar.core.intel.threatfox import ThreatFoxRegistry
+from wardsoar.core.intel.urlhaus import URLhausRegistry
 
 # ---------------------------------------------------------------------------
 # Per-feed parse tests

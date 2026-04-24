@@ -11,10 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.intel.censys_client import CensysClient
-from src.intel.http_client_base import IpReputationCache
-from src.intel.securitytrails import SecurityTrailsClient
-from src.intel.shodan_client import ShodanClient
+from wardsoar.core.intel.censys_client import CensysClient
+from wardsoar.core.intel.http_client_base import IpReputationCache
+from wardsoar.core.intel.securitytrails import SecurityTrailsClient
+from wardsoar.core.intel.shodan_client import ShodanClient
 
 # ---------------------------------------------------------------------------
 # Shodan
