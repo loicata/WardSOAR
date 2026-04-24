@@ -605,7 +605,10 @@
       "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
       "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
       "Bash(.venv/Scripts/python.exe -m mypy --strict packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
-      "Bash(.venv/Scripts/python.exe -m black --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)"
+      "Bash(.venv/Scripts/python.exe -m black --line-length 100 packages/wardsoar-core/src/wardsoar/core/remote_agents/)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_netgate_apply.py -q)",
+      "Bash(.venv/Scripts/python.exe -m black --check --line-length 100 packages/wardsoar-core/src/wardsoar/core/)",
+      "Bash(.venv/Scripts/python.exe -m ruff check packages/wardsoar-core/src/)"
     ]
   }
 }
