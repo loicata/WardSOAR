@@ -1,0 +1,45 @@
+[project]
+name = "wardsoar-pc"
+version = "0.0.1"
+description = "WardSOAR PC — Windows desktop application: local Suricata, forensics, native UI, DPAPI-encrypted evidence, MSI packaging."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+authors = [
+    { name = "Loic Ader", email = "contact@loicata.com" },
+]
+
+dependencies = [
+    "wardsoar-core",
+    # Windows-only runtime (uncomment as modules migrate over):
+    # "wmi>=1.5.1",
+    # "pywin32>=306",
+    # "PySide6>=6.7.0",
+    # "yara-python>=4.5.0",
+    # "reportlab>=4.0.0",
+    # "Pillow>=10.0",
+    # "python-telegram-bot>=21.0",
+    # "aiosmtplib>=3.0.0",
+]
+
+[project.gui-scripts]
+# Entry point will switch to wardsoar.pc.main once migrated:
+# wardsoar = "wardsoar.pc.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["wardsoar.pc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.uv.sources]
+# Link the local core package by workspace so edits are picked up
+# without reinstall. The matching workspace declaration lives in the
+# root pyproject.toml.
+wardsoar-core = { workspace = true }

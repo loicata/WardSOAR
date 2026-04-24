@@ -562,7 +562,17 @@
       "Bash(ls -la build/)",
       "PowerShell(.\\\\scripts\\\\build.ps1)",
       "Bash(certutil -hashfile \"F:/Documents/loicata/WardSOAR/dist/WardSOAR_0.22.7.msi\" SHA256)",
-      "Bash(curl -sS \"https://www.gnu.org/licenses/gpl-3.0.txt\" -o /tmp/gpl-3.0.txt)"
+      "Bash(curl -sS \"https://www.gnu.org/licenses/gpl-3.0.txt\" -o /tmp/gpl-3.0.txt)",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)",
+      "Bash(uv --version)",
+      "Bash(hatch --version)",
+      "Bash(pdm --version)",
+      "Bash(.venv/Scripts/uv --version)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-pc/tests -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-virus-sniff/tests -q)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests -q)"
     ]
   }
 }

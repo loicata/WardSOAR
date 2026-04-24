@@ -77,3 +77,14 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+
+# ---------------------------------------------------------------------------
+# uv workspace — monorepo layout (Option 2, decided 2026-04-24)
+# ---------------------------------------------------------------------------
+# The legacy ``src/`` layout coexists with the new ``packages/`` layout
+# during the migration. Each package under ``packages/`` is a standalone
+# Python distribution with its own pyproject.toml, dependencies, and
+# release cycle. See docs/ARCHITECTURE.md §3 for the rationale.
+[tool.uv.workspace]
+members = ["packages/*"]

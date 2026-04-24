@@ -1,0 +1,38 @@
+[project]
+name = "wardsoar-virus-sniff"
+version = "0.0.1"
+description = "Virus Sniff — plug-and-play diagnostic appliance on Raspberry Pi 5 + Ubuntu Server 26.04 ARM64. Bridges a single client PC to WardSOAR."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+authors = [
+    { name = "Loic Ader", email = "contact@loicata.com" },
+]
+
+dependencies = [
+    "wardsoar-core",
+    # Linux-only runtime (uncomment as modules are implemented):
+    # "fastapi>=0.110.0",       # or flask>=3.0.0
+    # "uvicorn[standard]>=0.29.0",
+    # "jinja2>=3.1.0",
+    # "python-nftables>=0.2",   # TBD; alternative: subprocess wrapper
+]
+
+[project.scripts]
+# Entry point once migrated:
+# virus-sniff = "wardsoar.vs.main:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["wardsoar.vs*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.uv.sources]
+wardsoar-core = { workspace = true }

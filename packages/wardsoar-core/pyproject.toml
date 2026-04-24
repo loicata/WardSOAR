@@ -1,0 +1,39 @@
+[project]
+name = "wardsoar-core"
+version = "0.0.1"
+description = "WardSOAR core — cross-platform pipeline, analyzer, intelligence clients, models. Shared by WardSOAR PC and Virus Sniff."
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+authors = [
+    { name = "Loic Ader", email = "contact@loicata.com" },
+]
+
+# Cross-platform runtime dependencies only. OS-specific deps
+# (pywin32, PySide6, Flask, etc.) live in sibling packages.
+dependencies = [
+    "pydantic>=2.0.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "anthropic>=0.40.0",
+    "vt-py>=0.18.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9.0",
+    "asyncssh>=2.14.0",
+    "watchdog>=4.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+# Implicit namespace package: `wardsoar/` has no __init__.py so
+# wardsoar-pc and wardsoar-virus-sniff can contribute to the same
+# top-level namespace without colliding.
+include = ["wardsoar.core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
