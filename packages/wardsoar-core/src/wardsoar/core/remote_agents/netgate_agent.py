@@ -93,6 +93,22 @@ class NetgateAgent:
     async def list_blocklist(self) -> list[str]:
         return await self._ssh.list_blocklist()
 
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        """Off-host agent — refuse the operation explicitly.
+
+        ``NetgateAgent`` reaches pfSense via SSH from another host (the
+        operator's PC running WardSOAR). It has no authority to kill a
+        process on the WardSOAR host and zero relevance to processes on
+        the pfSense appliance itself, which is a router, not a workstation.
+
+        Raises:
+            NotImplementedError: Always. The responder catches this and
+                skips the kill action; the IP block remains applied.
+        """
+        raise NotImplementedError(
+            "NetgateAgent does not co-reside with the target host — kill skipped"
+        )
+
     # ------------------------------------------------------------------
     # Netgate-specific operations (no analogue on Virus Sniff)
     # ------------------------------------------------------------------

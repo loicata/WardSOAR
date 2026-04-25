@@ -319,3 +319,75 @@ class TestSubprocessFailSafe:
         ok, message = await WindowsFirewallBlocker().check_status()
         assert ok is False
         assert "timeout" in message.lower()
+
+
+# ---------------------------------------------------------------------------
+# kill_process_on_target — co-resident agent, real psutil interaction
+# ---------------------------------------------------------------------------
+
+
+class TestKillProcessOnTarget:
+    """``WindowsFirewallBlocker`` runs on the same Windows host as the
+    process to kill, so it owns the ``psutil`` interaction. We mock
+    ``psutil.Process`` to keep the test deterministic without spawning
+    real processes."""
+
+    @pytest.mark.asyncio
+    async def test_successful_terminate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The happy path: psutil resolves the PID, we read its name,
+        terminate it, and return ``(True, name)`` to the responder."""
+        mock_proc = MagicMock()
+        mock_proc.name.return_value = "malware.exe"
+        monkeypatch.setattr(
+            "wardsoar.pc.windows_firewall.psutil.Process",
+            MagicMock(return_value=mock_proc),
+        )
+
+        success, message = await WindowsFirewallBlocker().kill_process_on_target(1234)
+
+        assert success is True
+        assert message == "malware.exe"
+        mock_proc.terminate.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_no_such_process_returns_false(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lookup race: between alert detection and kill, the process
+        already exited. Surface a ``(False, message)`` so the responder
+        logs the miss without crashing the pipeline."""
+        import psutil as real_psutil
+
+        def _raise_no_such(_pid: int) -> Any:
+            raise real_psutil.NoSuchProcess(99999)
+
+        monkeypatch.setattr(
+            "wardsoar.pc.windows_firewall.psutil.Process",
+            _raise_no_such,
+        )
+
+        success, message = await WindowsFirewallBlocker().kill_process_on_target(99999)
+
+        assert success is False
+        assert "99999" in message or "no process" in message.lower()
+
+    @pytest.mark.asyncio
+    async def test_access_denied_returns_false(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Privilege escalation refused: the operator launched WardSOAR
+        non-elevated and the OS denies the terminate. Same fail-safe
+        contract — return ``(False, message)`` for the responder to log."""
+        import psutil as real_psutil
+
+        def _raise_denied(_pid: int) -> Any:
+            raise real_psutil.AccessDenied(1234)
+
+        monkeypatch.setattr(
+            "wardsoar.pc.windows_firewall.psutil.Process",
+            _raise_denied,
+        )
+
+        success, message = await WindowsFirewallBlocker().kill_process_on_target(1234)
+
+        assert success is False

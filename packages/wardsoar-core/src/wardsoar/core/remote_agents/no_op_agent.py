@@ -76,3 +76,17 @@ class NoOpAgent:
 
     async def list_blocklist(self) -> list[str]:
         return []
+
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        """Degenerate no-op agent — refuse the operation.
+
+        Without any configured source there is no meaningful host on
+        which to perform the kill. Behaves like an off-host agent and
+        lets the responder skip the action gracefully.
+
+        Raises:
+            NotImplementedError: Always. The responder catches this
+                and the IP block (also a no-op here) is the only
+                visible action.
+        """
+        raise NotImplementedError("NoOpAgent has no target host — kill skipped")

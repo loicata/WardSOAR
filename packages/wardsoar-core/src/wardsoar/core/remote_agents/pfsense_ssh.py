@@ -304,6 +304,23 @@ class PfSenseSSH:
         """
         return await self._run_cmd(cmd, timeout=timeout)
 
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        """Off-host transport — refuse the operation explicitly.
+
+        ``PfSenseSSH`` is the SSH transport layer; pfSense itself is
+        a router, not a workstation, and the SSH session has no
+        authority over the WardSOAR host process table. Implemented
+        here only so :class:`MagicMock(spec=PfSenseSSH)` test fixtures
+        keep satisfying the :class:`RemoteAgent` Protocol after the
+        method was added there.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        raise NotImplementedError(
+            "PfSenseSSH does not co-reside with the target host — kill skipped"
+        )
+
 
 class BlockTracker:
     """Track block timestamps locally since pf tables don't store metadata.

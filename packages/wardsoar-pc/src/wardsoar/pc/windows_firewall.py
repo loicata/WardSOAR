@@ -44,6 +44,8 @@ import logging
 import subprocess  # nosec B404 — netsh is the documented Windows surface
 from typing import Optional
 
+import psutil
+
 from wardsoar.pc import win_paths
 
 logger = logging.getLogger("ward_soar.windows_firewall")
@@ -292,3 +294,27 @@ class WindowsFirewallBlocker:
                         ips.add(candidate)
                     break
         return sorted(ips)
+
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        """Terminate ``pid`` on this Windows host via ``psutil``.
+
+        Co-resident agent: WardSOAR PC runs on the same machine that
+        owns the malicious process, so killing it here is meaningful.
+        Mirrors the previous in-responder implementation, just moved
+        behind the :class:`RemoteAgent` Protocol so the off-host
+        agents (Netgate over SSH, future Virus Sniff RPi) can refuse
+        the operation explicitly via ``NotImplementedError``.
+
+        Returns:
+            ``(True, process_name)`` on a clean ``terminate()``.
+            ``(False, error_message)`` if the process disappeared
+            between lookup and kill, the OS denied access, or any
+            other local failure.
+        """
+        try:
+            proc = psutil.Process(pid)
+            proc_name = proc.name()
+            proc.terminate()
+            return True, proc_name
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as exc:
+            return False, str(exc)

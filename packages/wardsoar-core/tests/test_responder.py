@@ -66,6 +66,11 @@ def _make_responder(
     ssh.remove_from_blocklist = AsyncMock(return_value=True)
     ssh.is_blocked = AsyncMock(return_value=False)
     ssh.list_blocklist = AsyncMock(return_value=[])
+    # Default kill behaviour: pretend the agent is co-resident and the
+    # kill always succeeds. Individual tests override via AsyncMock or
+    # by setting ``side_effect=NotImplementedError(...)`` when they
+    # exercise the off-host branch.
+    ssh.kill_process_on_target = AsyncMock(return_value=(True, "test_proc"))
 
     tracker_path = (tmp_path or Path("/tmp")) / "test_blocks.json"
     tracker = BlockTracker(persist_path=tracker_path)
@@ -495,32 +500,59 @@ class TestBlockIpPfsense:
 
 
 class TestKillLocalProcess:
-    """Tests for ThreatResponder.kill_local_process."""
+    """Tests for ThreatResponder.kill_local_process.
+
+    The actual kill is delegated to ``RemoteAgent.kill_process_on_target``
+    so the responder no longer touches ``psutil`` directly. These tests
+    drive the three branches the responder must distinguish:
+
+    * agent reports success → ``ResponseAction(PROCESS_KILL, success=True)``
+    * agent reports local failure → ``ResponseAction(PROCESS_KILL, success=False)``
+    * agent raises ``NotImplementedError`` (off-host) → ``ResponseAction(NONE, success=False)``
+    """
 
     @pytest.mark.asyncio
     async def test_successful_kill(self, tmp_path: Path) -> None:
         responder = _make_responder(tmp_path=tmp_path)
-        with patch("wardsoar.core.responder.psutil") as mock_psutil:
-            mock_proc = MagicMock()
-            mock_proc.pid = 1234
-            mock_proc.name.return_value = "malware.exe"
-            mock_psutil.Process.return_value = mock_proc
+        responder._ssh.kill_process_on_target = AsyncMock(  # type: ignore[method-assign]
+            return_value=(True, "malware.exe")
+        )
 
-            result = await responder.kill_local_process(1234)
+        result = await responder.kill_local_process(1234)
         assert result.success is True
         assert result.action_type == BlockAction.PROCESS_KILL
+        assert result.target_process_id == 1234
 
     @pytest.mark.asyncio
     async def test_nonexistent_process(self, tmp_path: Path) -> None:
         responder = _make_responder(tmp_path=tmp_path)
-        with patch("wardsoar.core.responder.psutil") as mock_psutil:
-            import psutil as real_psutil
+        responder._ssh.kill_process_on_target = AsyncMock(  # type: ignore[method-assign]
+            return_value=(False, "process 99999 no longer exists")
+        )
 
-            mock_psutil.NoSuchProcess = real_psutil.NoSuchProcess
-            mock_psutil.Process.side_effect = real_psutil.NoSuchProcess(99999)
-
-            result = await responder.kill_local_process(99999)
+        result = await responder.kill_local_process(99999)
         assert result.success is False
+        assert result.action_type == BlockAction.PROCESS_KILL
+        assert result.error_message == "process 99999 no longer exists"
+
+    @pytest.mark.asyncio
+    async def test_off_host_agent_skips_kill(self, tmp_path: Path) -> None:
+        """An off-host agent (Netgate, NoOp, future VS) raises
+        ``NotImplementedError`` from ``kill_process_on_target``. The
+        responder must catch it, return a ``BlockAction.NONE`` action,
+        and never propagate the exception — the IP block stays applied,
+        the kill is simply skipped.
+        """
+        responder = _make_responder(tmp_path=tmp_path)
+        responder._ssh.kill_process_on_target = AsyncMock(  # type: ignore[method-assign]
+            side_effect=NotImplementedError("agent off-host")
+        )
+
+        result = await responder.kill_local_process(4321)
+        assert result.success is False
+        assert result.action_type == BlockAction.NONE
+        assert result.target_process_id == 4321
+        assert "kill skipped" in (result.error_message or "")
 
 
 # ---------------------------------------------------------------------------

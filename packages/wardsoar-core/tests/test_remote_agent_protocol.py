@@ -19,6 +19,9 @@ class _FakeAgent:
 
     Mirrors the protocol surface exactly so ``isinstance`` accepts it
     without dragging an asyncssh-bound real agent into pure unit tests.
+    Defaults to "off-host" semantics for ``kill_process_on_target`` —
+    individual tests can override the method on the instance when they
+    need the co-resident success branch.
     """
 
     def __init__(self) -> None:
@@ -40,6 +43,9 @@ class _FakeAgent:
 
     async def list_blocklist(self) -> list[str]:
         return list(self._blocked)
+
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        raise NotImplementedError("FakeAgent off-host by default")
 
 
 class _NotAnAgent:
@@ -73,18 +79,32 @@ class TestRemoteAgentProtocol:
         assert not isinstance(object(), RemoteAgent)
 
     def test_protocol_method_names(self) -> None:
-        """All five operations are part of the public protocol surface."""
+        """All six operations are part of the public protocol surface."""
         expected = {
             "check_status",
             "add_to_blocklist",
             "remove_from_blocklist",
             "is_blocked",
             "list_blocklist",
+            "kill_process_on_target",
         }
         # ``Protocol`` exposes its members on the class via ``__dict__``;
         # filter out the typing internals that start with an underscore.
         actual = {name for name in vars(RemoteAgent) if not name.startswith("_")}
         assert expected.issubset(actual), expected - actual
+
+    @pytest.mark.asyncio
+    async def test_fake_agent_off_host_kill_raises(self) -> None:
+        """The default ``_FakeAgent`` mirrors off-host semantics — the
+        concrete agents that don't co-reside with the target host
+        (NetgateAgent, NoOpAgent, future VsAgent) raise
+        ``NotImplementedError`` from ``kill_process_on_target`` rather
+        than silently returning False, so accidental cross-host kills
+        become architecturally impossible.
+        """
+        agent = _FakeAgent()
+        with pytest.raises(NotImplementedError):
+            await agent.kill_process_on_target(1234)
 
 
 # ---------------------------------------------------------------------------

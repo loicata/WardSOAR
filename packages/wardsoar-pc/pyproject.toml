@@ -11,6 +11,11 @@ authors = [
 
 dependencies = [
     "wardsoar-core",
+    # psutil owns the host-process surface (process_risk, forensics,
+    # collector, healthcheck, WindowsFirewallBlocker.kill_process_on_target).
+    # Migrated from wardsoar-core on 2026-04-25 so core stays strictly
+    # platform-agnostic — see [project_psutil_layering.md] memory.
+    "psutil>=5.9.0",
     # Windows-only runtime (uncomment as modules migrate over):
     # "wmi>=1.5.1",
     # "pywin32>=306",

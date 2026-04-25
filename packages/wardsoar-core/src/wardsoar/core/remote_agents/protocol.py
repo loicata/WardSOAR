@@ -89,3 +89,39 @@ class RemoteAgent(Protocol):
             caller MUST treat the result as a set.
         """
         ...
+
+    async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
+        """Terminate a process by PID on the host the agent runs on.
+
+        Used by the responder when a confirmed-threat alert maps to a
+        local process that should be killed in addition to the IP block.
+        The semantics depend on the agent's topology relative to the
+        target host:
+
+        * **Co-resident agents** (the agent runs ON the same machine as
+          the process to kill, e.g. ``WindowsFirewallBlocker`` on a
+          standalone PC) implement the kill via ``psutil`` or equivalent
+          and return ``(True, process_name)`` on success or
+          ``(False, error_message)`` on local failure (NoSuchProcess,
+          AccessDenied).
+        * **Off-host agents** (the agent reaches the enforcement point
+          over the network, e.g. ``NetgateAgent`` via SSH to pfSense, or
+          a future ``VsAgent`` running on the Virus Sniff RPi appliance
+          while the malicious process lives on a separate PC client)
+          MUST raise :class:`NotImplementedError`. The responder catches
+          this and skips the kill action — the IP block remains applied.
+
+        Returns:
+            ``(True, process_name)`` on successful termination.
+            ``(False, error_message)`` on local error (process exited
+            between lookup and kill, missing OS permission, etc.).
+
+        Raises:
+            NotImplementedError: When the agent does not co-reside with
+                the target host. This design choice makes accidental
+                cross-host kills architecturally impossible — a future
+                Virus Sniff pipeline cannot kill a process on the RPi
+                by mistake while believing it is killing a process on
+                the connected PC.
+        """
+        ...

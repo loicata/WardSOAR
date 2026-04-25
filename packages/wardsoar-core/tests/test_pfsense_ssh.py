@@ -266,6 +266,17 @@ class TestPfSenseSSHBlocklist:
         assert reachable is False
 
     @pytest.mark.asyncio
+    async def test_kill_process_on_target_raises_not_implemented(self) -> None:
+        """``PfSenseSSH`` is the SSH transport and pfSense itself is a
+        router with no host process table to manipulate. The Protocol
+        method exists only to keep ``MagicMock(spec=PfSenseSSH)`` test
+        fixtures conformant — it must always raise ``NotImplementedError``.
+        """
+        ssh = _make_ssh()
+        with pytest.raises(NotImplementedError, match="does not co-reside"):
+            await ssh.kill_process_on_target(1234)
+
+    @pytest.mark.asyncio
     async def test_concurrent_adds_are_serialised(self) -> None:
         """Regression for the 2026-04-23 22:40 incident.
 

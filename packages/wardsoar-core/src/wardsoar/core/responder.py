@@ -18,9 +18,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-import psutil
-from psutil import AccessDenied, NoSuchProcess
-
 from wardsoar.core.asn_enricher import AsnInfo
 from wardsoar.core.cdn_allowlist import CdnAllowlist
 from wardsoar.core.config import WhitelistConfig
@@ -521,7 +518,19 @@ class ThreatResponder:
             )
 
     async def kill_local_process(self, pid: int) -> ResponseAction:
-        """Terminate a local process by PID.
+        """Terminate a local process by PID via the configured agent.
+
+        The actual kill is delegated to :meth:`RemoteAgent.kill_process_on_target`
+        so the host-specific implementation (``psutil`` on Windows, future
+        equivalent on other platforms) lives next to the agent instead of
+        bleeding ``psutil`` into the platform-agnostic core.
+
+        Off-host agents (``NetgateAgent`` reaching pfSense over SSH,
+        ``NoOpAgent``, future ``VsAgent`` running on a Virus Sniff RPi
+        appliance) raise :class:`NotImplementedError` from
+        ``kill_process_on_target``. We catch it here and surface a
+        ``BlockAction.NONE`` response so the caller sees that the kill
+        was deliberately skipped while the IP block remains applied.
 
         Args:
             pid: Process ID to terminate.
@@ -530,24 +539,36 @@ class ThreatResponder:
             ResponseAction documenting the result.
         """
         try:
-            proc = psutil.Process(pid)
-            proc_name = proc.name()
-            proc.terminate()
-            logger.info("Terminated process %d (%s)", pid, proc_name)
+            success, message = await self._ssh.kill_process_on_target(pid)
+        except NotImplementedError:
+            logger.debug(
+                "Agent %s does not co-reside with target — skipping kill of pid %d",
+                type(self._ssh).__name__,
+                pid,
+            )
+            return ResponseAction(
+                action_type=BlockAction.NONE,
+                target_process_id=pid,
+                success=False,
+                error_message="agent does not co-reside with target — kill skipped",
+            )
+
+        if success:
+            logger.info("Terminated process %d (%s)", pid, message)
             return ResponseAction(
                 action_type=BlockAction.PROCESS_KILL,
                 target_process_id=pid,
                 success=True,
                 executed_at=datetime.now(timezone.utc),
             )
-        except (NoSuchProcess, AccessDenied, OSError) as exc:
-            logger.error("Failed to terminate process %d: %s", pid, exc)
-            return ResponseAction(
-                action_type=BlockAction.PROCESS_KILL,
-                target_process_id=pid,
-                success=False,
-                error_message=str(exc),
-            )
+
+        logger.error("Failed to terminate process %d: %s", pid, message)
+        return ResponseAction(
+            action_type=BlockAction.PROCESS_KILL,
+            target_process_id=pid,
+            success=False,
+            error_message=message,
+        )
 
     async def get_active_blocks(self) -> list[dict[str, Any]]:
         """List currently blocked IPs from pfSense blocklist.

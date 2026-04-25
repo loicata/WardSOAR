@@ -144,6 +144,19 @@ class TestRemoteAgentDelegation:
         assert result == ["203.0.113.42", "198.51.100.7"]
         ssh.list_blocklist.assert_awaited_once_with()
 
+    @pytest.mark.asyncio
+    async def test_kill_process_on_target_raises_not_implemented(self) -> None:
+        """``NetgateAgent`` is off-host (SSH from operator's PC to pfSense
+        router) and has no authority over the WardSOAR host process
+        table — let alone any process on the firewall itself. The Protocol
+        method must raise ``NotImplementedError`` so the responder skips
+        the kill while the IP block stays applied.
+        """
+        agent = NetgateAgent(_ssh_mock())
+
+        with pytest.raises(NotImplementedError, match="does not co-reside"):
+            await agent.kill_process_on_target(1234)
+
 
 # ---------------------------------------------------------------------------
 # Netgate-specific operations

@@ -64,3 +64,11 @@ class TestNoOpAgentBehaviour:
     @pytest.mark.asyncio
     async def test_list_blocklist_returns_empty(self) -> None:
         assert await NoOpAgent().list_blocklist() == []
+
+    @pytest.mark.asyncio
+    async def test_kill_process_on_target_raises_not_implemented(self) -> None:
+        """The no-op agent has no host, so a kill request must surface
+        ``NotImplementedError`` and let the responder skip the action.
+        """
+        with pytest.raises(NotImplementedError, match="no target host"):
+            await NoOpAgent().kill_process_on_target(1234)
