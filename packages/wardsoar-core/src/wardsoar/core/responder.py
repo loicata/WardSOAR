@@ -31,7 +31,8 @@ from wardsoar.core.models import (
     ThreatVerdict,
     WardMode,
 )
-from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.remote_agents import RemoteAgent
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 from wardsoar.core.trusted_temp import TrustedTempRegistry
 
 # Hard Protect — minimum confidence on a BENIGN verdict to skip the block.
@@ -122,7 +123,11 @@ class ThreatResponder:
     Args:
         config: Responder configuration dict from config.yaml.
         whitelist: Whitelist configuration to prevent blocking protected IPs.
-        ssh: PfSenseSSH instance for firewall operations.
+        ssh: ``RemoteAgent`` for firewall block / unblock operations.
+            Today this is always a ``NetgateAgent`` (Phase 3b.2); the
+            type widened to the protocol so future agents (Virus Sniff
+            Pi, third-party sensors) plug in without touching the
+            responder's hot path.
         tracker: BlockTracker instance for block timestamp tracking.
     """
 
@@ -130,7 +135,7 @@ class ThreatResponder:
         self,
         config: dict[str, Any],
         whitelist: WhitelistConfig,
-        ssh: PfSenseSSH,
+        ssh: RemoteAgent,
         tracker: BlockTracker,
         trusted_temp: Optional[TrustedTempRegistry] = None,
         confidence_threshold: float = 0.7,

@@ -14,7 +14,8 @@ import logging
 from typing import Any
 
 from wardsoar.core.config import WhitelistConfig
-from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.remote_agents import RemoteAgent
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 
 logger = logging.getLogger("ward_soar.rule_manager")
 
@@ -29,7 +30,10 @@ class RuleManager:
     Args:
         config: RuleManager configuration dict from config.yaml.
         whitelist: Whitelist configuration for safety checks.
-        ssh: PfSenseSSH instance for firewall operations.
+        ssh: ``RemoteAgent`` for firewall unblock / list operations.
+            Today this is always a ``NetgateAgent`` (Phase 3b.2); the
+            type widened to the protocol so future agents plug in
+            without touching the cleanup loop.
         tracker: BlockTracker instance for block timestamp tracking.
         block_duration_hours: Default block duration in hours.
     """
@@ -38,7 +42,7 @@ class RuleManager:
         self,
         config: dict[str, Any],
         whitelist: WhitelistConfig,
-        ssh: PfSenseSSH,
+        ssh: RemoteAgent,
         tracker: BlockTracker,
         block_duration_hours: int = 24,
     ) -> None:

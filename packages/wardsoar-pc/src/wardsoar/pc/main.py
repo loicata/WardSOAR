@@ -42,7 +42,8 @@ from wardsoar.core.logger import log_decision
 from wardsoar.core.metrics import MetricsCollector
 from wardsoar.core.models import DecisionRecord, SuricataAlert, ThreatVerdict
 from wardsoar.core.notifier import Notifier
-from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
+from wardsoar.core.remote_agents import NetgateAgent
+from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 from wardsoar.core.prescorer import AlertPreScorer
 from wardsoar.core.prescorer_feedback import PreScorerFeedbackStore
 from wardsoar.core.responder import ThreatResponder
@@ -93,17 +94,26 @@ class Pipeline:
         # because it needs the SSH handle created further down.
         self._tamper_detector: Optional[object] = None
 
-        # Initialize shared pfSense SSH + block tracker
+        # Build the Netgate remote agent. It satisfies the
+        # ``RemoteAgent`` protocol consumed by the responder /
+        # rule_manager / healthcheck (Phase 3b.3) and exposes the
+        # Netgate-specific operations (``run_read_only``,
+        # ``apply_suricata_runmode``, ``migrate_alias_to_urltable``)
+        # called by the audit / tamper / apply / custom-rules layers.
+        # The latter still consume the underlying ``PfSenseSSH`` via
+        # the ``.ssh`` property — that escape hatch will go away in
+        # the next phase once the Netgate-specific layers migrate to
+        # the agent's own methods.
         pfsense_cfg = config.responder.get("pfsense", {})
         ssh_key_path = pfsense_cfg.get("ssh_key_path", "") or os.getenv("WARD_SSH_KEY_PATH", "")
-        pfsense_ssh = PfSenseSSH(
+        netgate_agent = NetgateAgent.from_credentials(
             host=config.network.get("pfsense_ip", "192.168.2.1"),
             ssh_user=pfsense_cfg.get("ssh_user", "admin"),
             ssh_key_path=ssh_key_path,
             ssh_port=int(pfsense_cfg.get("ssh_port", 22)),
             blocklist_table=pfsense_cfg.get("blocklist_table", "blocklist"),
         )
-        self._pfsense_ssh = pfsense_ssh
+        self._netgate_agent = netgate_agent
         from wardsoar.core.config import get_bundle_dir, get_data_dir
 
         block_tracker = BlockTracker(persist_path=get_data_dir() / "block_tracker.json")
@@ -238,7 +248,7 @@ class Pipeline:
         self._responder = ThreatResponder(
             config.responder,
             whitelist,
-            pfsense_ssh,
+            netgate_agent,
             block_tracker,
             trusted_temp=trusted_temp_registry,
             confidence_threshold=config.analyzer.get("confidence_threshold", 0.7),
@@ -250,13 +260,13 @@ class Pipeline:
         self._rule_manager = RuleManager(
             config.rule_manager,
             whitelist,
-            pfsense_ssh,
+            netgate_agent,
             block_tracker,
             block_duration_hours=config.responder.get("block_duration_hours", 24),
         )
         self._notifier = Notifier(config.notifier)
         self._metrics = MetricsCollector(config.metrics)
-        self._healthcheck = HealthChecker(config.healthcheck, pfsense_ssh=pfsense_ssh)
+        self._healthcheck = HealthChecker(config.healthcheck, pfsense_ssh=netgate_agent)
         self._queue = AlertQueue(config.alert_queue)
 
         # Rollback orchestrator — wired last, after rule_manager is built.
@@ -449,7 +459,7 @@ class Pipeline:
         """
         from wardsoar.core.netgate_audit import run_audit
 
-        result = await run_audit(self._pfsense_ssh, self._config)
+        result = await run_audit(self._netgate_agent.ssh, self._config)
         self._last_audit_result = result
         logger.info(
             "netgate_audit: %d findings in %.2fs, any_critical_ko=%s",
@@ -475,7 +485,7 @@ class Pipeline:
             from wardsoar.core.netgate_tamper import NetgateTamperDetector
 
             self._tamper_detector = NetgateTamperDetector(
-                ssh=self._pfsense_ssh,
+                ssh=self._netgate_agent.ssh,
                 baseline_path=get_data_dir() / "netgate_baseline.json",
                 host=self._config.network.get("pfsense_ip", ""),
             )
@@ -583,7 +593,7 @@ class Pipeline:
         from wardsoar.core.netgate_custom_rules import build_bundle, deploy_bundle
 
         bundle = build_bundle(self._known_actors)
-        result = await deploy_bundle(self._pfsense_ssh, bundle)
+        result = await deploy_bundle(self._netgate_agent.ssh, bundle)
         if result.success:
             logger.warning(
                 "netgate_custom_rules: deployed %d rules (%d bytes) to %s",
@@ -608,7 +618,7 @@ class Pipeline:
         from wardsoar.core.netgate_apply import NetgateApplier
 
         applier = NetgateApplier(
-            ssh=self._pfsense_ssh,
+            ssh=self._netgate_agent.ssh,
             backup_dir=get_data_dir() / "netgate_backups",
         )
         self._netgate_applier = applier

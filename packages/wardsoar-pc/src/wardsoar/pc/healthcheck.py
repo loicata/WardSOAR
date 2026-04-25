@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 import psutil
 
-from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
+from wardsoar.core.remote_agents import RemoteAgent
 
 logger = logging.getLogger("ward_soar.healthcheck")
 
@@ -55,7 +55,7 @@ class HealthChecker:
     def __init__(
         self,
         config: dict[str, Any],
-        pfsense_ssh: PfSenseSSH | None = None,
+        pfsense_ssh: RemoteAgent | None = None,
     ) -> None:
         self._enabled: bool = config.get("enabled", True)
         self._interval_seconds: int = config.get("interval_seconds", 300)
@@ -101,8 +101,10 @@ class HealthChecker:
     async def check_pfsense_ssh(self) -> HealthResult:
         """Verify pfSense is reachable via SSH.
 
-        Uses the PfSenseSSH instance if available, otherwise falls back
-        to a simple TCP port check on the SSH port.
+        Uses the injected ``RemoteAgent`` (typically a ``NetgateAgent``)
+        when available, otherwise falls back to a simple TCP port check
+        on the SSH port. The agent's ``check_status()`` returns a
+        human-readable message that is surfaced verbatim in the UI.
         """
         if self._pfsense_ssh is not None:
             start = time.monotonic()
@@ -116,7 +118,7 @@ class HealthChecker:
                 response_time_ms=elapsed,
             )
 
-        # Fallback: TCP port check when no PfSenseSSH instance
+        # Fallback: TCP port check when no RemoteAgent instance
         if not self._pfsense_ip:
             return HealthResult(
                 component="pfSense SSH",
