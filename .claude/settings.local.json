@@ -888,7 +888,9 @@
       "Bash(.venv/Scripts/python.exe -m bandit -r packages/wardsoar-core/src packages/wardsoar-pc/src packages/wardsoar-virus-sniff/src -ll --quiet)",
       "Bash(.venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_architecture.py -q)",
       "Bash(powershell -Command \"Get-Process -Name 'WardSOAR' -ErrorAction SilentlyContinue | Select-Object Id,StartTime,WS,Path | Format-List\")",
-      "Bash(awk 'NR>=26571' \"C:/Users/loica/AppData/Roaming/WardSOAR/logs/ward_soar.log\")"
+      "Bash(awk 'NR>=26571' \"C:/Users/loica/AppData/Roaming/WardSOAR/logs/ward_soar.log\")",
+      "Bash(powershell -Command \"Get-ItemProperty -Path 'HKCU:\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run' -Name 'WardSOAR' -ErrorAction SilentlyContinue | Format-List\")",
+      "Bash(powershell -Command \"Get-ItemProperty -Path 'HKLM:\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Run' -Name 'WardSOAR' -ErrorAction SilentlyContinue | Format-List\")"
     ]
   }
 }
