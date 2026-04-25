@@ -18,6 +18,77 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.20 — 2026-04-25
+
+Adds the upstream `SourcesQuestionnaire` — a four-screen pre-wizard
+that asks the operator three Yes/No questions before the detailed
+config wizard runs:
+
+  1. Do you have a Netgate pfSense on this LAN?
+  2. Do you have a Virus Sniff (Raspberry Pi) appliance?
+  3. Install Suricata locally on this PC?
+
+…with a recap screen that flags coverage gaps (loopback / VPN traffic
+not visible to a Netgate-only setup; Netgate + Virus Sniff runtime
+exclusivity; standalone-PC LAN-blindness, etc.).
+
+The questionnaire enforces the "≥1 source" invariant from the
+2026-04-24 architecture decision: if the operator answers No to both
+remote-agent questions, the local Suricata radio is force-checked and
+locked. The answers persist as a top-level `sources:` key in
+`config.yaml` and are passed to the existing `SetupWizard` so it can
+skip pages whose inputs only matter for an unselected source — the
+pfSense SSH page is hidden when Netgate=No, for example.
+
+Operators who already have a `config.yaml` (every existing install)
+are not affected: the new flow only runs on first-launch when no
+config exists, and the legacy detailed wizard still works exactly the
+same when invoked without a `sources` argument.
+
+### What changed
+
+- **New module**:
+  `packages/wardsoar-pc/src/wardsoar/pc/ui/sources_questionnaire.py`
+  — `SourceChoices` dataclass + `SourcesQuestionnaire` QDialog (four
+  pages, forced-Yes rule, recap with coverage warnings, finish-time
+  guard against the impossible "no source" state).
+- **`wardsoar.pc.ui.app`** — first-run flow now opens the
+  `SourcesQuestionnaire` first; cancel exits the app the same way it
+  did with the legacy wizard cancel. The `SetupWizard` is then
+  constructed with `sources=questionnaire.choices`.
+- **`wardsoar.pc.ui.setup_wizard`** — `SetupWizard.__init__` accepts
+  an optional `sources: SourceChoices`. Pages whose inputs are
+  irrelevant for the chosen sources are skipped via `_go_next` /
+  `_go_back` walks (today: pfSense SSH page when Netgate=No). The
+  generated `config.yaml` includes a `sources:` block when the
+  questionnaire ran. When `sources=None` (legacy / test invocation)
+  every page is shown — exactly as before.
+- **20 new tests** (`tests/test_sources_questionnaire.py`):
+  `SourceChoices` invariants and warnings (8) + `SourcesQuestionnaire`
+  Qt behaviour (12: construction, defaults, forced-Yes rule,
+  navigation, recap rendering, finish guard).
+
+### What's NOT in this release
+
+- The `RemoteAgentRegistry` is **not yet driven by the `sources:`
+  key**. `Pipeline.__init__` still constructs `NetgateAgent`
+  unconditionally from `responder.pfsense.*` env / config keys. A
+  follow-up will wire the registry to the `sources:` block so that
+  Netgate=No actually skips the agent instantiation at runtime.
+- No "Sources" panel in the Settings view yet — for now the
+  `sources:` key is editable via the existing ConfigView YAML editor.
+- Local Suricata + Windows Firewall + Npcap download — separate
+  follow-up work; the questionnaire collects the choice but the
+  installer / blocker code is not in this release.
+
+- **File**: `WardSOAR_0.22.20.msi`
+- **Tests**: 1453 green, 2 skipped (+20 for the new questionnaire
+  module)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+---
+
 ## v0.22.19 — 2026-04-25
 
 Phase 3b.3.2 of the monorepo refactor — the four Netgate-specific
