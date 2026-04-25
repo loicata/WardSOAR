@@ -15,7 +15,8 @@ protocol type rather than the concrete classes (Phase 3b.3).
 
 from __future__ import annotations
 
+from wardsoar.core.remote_agents.netgate_agent import NetgateAgent
 from wardsoar.core.remote_agents.protocol import RemoteAgent
 from wardsoar.core.remote_agents.registry import RemoteAgentRegistry
 
-__all__ = ["RemoteAgent", "RemoteAgentRegistry"]
+__all__ = ["NetgateAgent", "RemoteAgent", "RemoteAgentRegistry"]
