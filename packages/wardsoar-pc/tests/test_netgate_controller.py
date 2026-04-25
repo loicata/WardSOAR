@@ -521,9 +521,7 @@ class TestSyncToAsyncBridge:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
-    async def test_request_audit_runs_to_completion_on_real_loop(
-        self, qapp: QApplication
-    ) -> None:
+    async def test_request_audit_runs_to_completion_on_real_loop(self, qapp: QApplication) -> None:
         audit_result = MagicMock()
         audit_result.to_dict = MagicMock(return_value={"ssh_reachable": True, "findings": []})
         pipeline = MagicMock()
@@ -572,9 +570,7 @@ class TestSyncToAsyncBridge:
         assert captured[0]["baseline_present"] is True
 
     @pytest.mark.asyncio
-    async def test_request_apply_runs_to_completion_on_real_loop(
-        self, qapp: QApplication
-    ) -> None:
+    async def test_request_apply_runs_to_completion_on_real_loop(self, qapp: QApplication) -> None:
         outcome = MagicMock()
         outcome.to_dict = MagicMock(return_value={"success": True, "fix_id": "fix_a"})
         pipeline = MagicMock()
