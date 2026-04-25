@@ -23,8 +23,13 @@ def test_import_package() -> None:
 def test_namespace_shared_with_core() -> None:
     """Importing both siblings under the same ``wardsoar`` namespace
     must not raise — this is the whole point of the implicit namespace
-    package layout."""
+    package layout.
+
+    ``wardsoar.core`` no longer exposes ``__version__`` (removed in
+    v0.22.10 — the placeholder was accidentally surfaced on the About
+    dialog).
+    """
     from wardsoar import core, pc
 
-    assert core.__version__
+    assert core is not None
     assert pc.__version__

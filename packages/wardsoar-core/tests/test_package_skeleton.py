@@ -6,9 +6,20 @@ from __future__ import annotations
 
 
 def test_import_package() -> None:
+    """The wardsoar.core namespace package is importable.
+
+    Historically asserted ``core.__version__ == "0.0.1"`` (skeleton
+    placeholder). Removed in v0.22.10 because that placeholder was
+    accidentally surfaced on the About dialog as ``v0.0.1``; the
+    shipped product version lives on :mod:`wardsoar.pc`.
+    """
     from wardsoar import core
 
-    assert core.__version__ == "0.0.1"
+    assert core is not None
+    assert not hasattr(core, "__version__"), (
+        "wardsoar.core must not expose __version__ — the shipped "
+        "version belongs on wardsoar.pc (read by pyproject.toml + WiX)."
+    )
 
 
 def test_namespace_is_implicit() -> None:

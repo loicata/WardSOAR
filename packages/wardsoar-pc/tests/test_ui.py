@@ -755,3 +755,39 @@ class TestNetgateView:
             assert emitted == [], "audit should not auto-refresh when every fix failed"
         finally:
             MessageBox.exec = original_exec  # type: ignore[method-assign]
+
+
+# ---------------------------------------------------------------------------
+# AboutDialog tests
+# ---------------------------------------------------------------------------
+
+
+class TestAboutDialog:
+    """Regression for v0.22.9 install: the About dialog displayed
+    ``v0.0.1`` because it imported ``__version__`` from
+    ``wardsoar.core`` (a skeleton placeholder) instead of
+    ``wardsoar.pc`` (the source of truth read by pyproject.toml and
+    WiX).
+    """
+
+    def test_version_matches_pc_package(self) -> None:
+        """The version surfaced by the dialog comes from wardsoar.pc."""
+        from wardsoar.pc import __version__ as pc_version
+        from wardsoar.pc.ui.views import about_dialog
+
+        assert about_dialog.__version__ == pc_version
+        assert about_dialog.__version__ != "0.0.1"
+
+    def test_dialog_title_shows_pc_version(self, qapp: QApplication) -> None:
+        """A constructed dialog renders the pc-package version in its labels."""
+        from PySide6.QtWidgets import QLabel
+
+        from wardsoar.pc import __version__ as pc_version
+        from wardsoar.pc.ui.views.about_dialog import AboutDialog
+
+        dialog = AboutDialog()
+        try:
+            label_text = " ".join(lbl.text() for lbl in dialog.findChildren(QLabel))
+            assert pc_version in label_text
+        finally:
+            dialog.deleteLater()

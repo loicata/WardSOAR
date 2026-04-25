@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from wardsoar.core import __version__
+from wardsoar.pc import __version__
 
 # The homepage link surfaced as a clickable label. Kept as a constant
 # so future renames (branding change, custom domain move) land in one
