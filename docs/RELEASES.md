@@ -58,6 +58,8 @@ protocol) ships separately so the riskier change can be reviewed and
 rolled back independently.
 
 - **File**: `WardSOAR_0.22.17.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `e661175da2aa775e1f835316963b6c1db1cb4ed17cce673d9be419138be18fc1`
 - **Tests**: 1434 green, 2 skipped (+35 vs v0.22.16: 14 protocol +
   registry tests, 15 NetgateAgent delegation tests, 1 banner
   regression test, +5 collected from new files)
