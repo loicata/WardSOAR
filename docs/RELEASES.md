@@ -18,6 +18,82 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.22 — 2026-04-25
+
+Adds the `WindowsFirewallBlocker` — a local-enforcement
+`RemoteAgent` backed by `netsh advfirewall firewall`. Pipeline now
+selects the agent on a three-way branch:
+
+| `sources.netgate` | `sources.suricata_local` | Agent |
+|---|---|---|
+| `True` (default) | * | `NetgateAgent` (legacy / rétro-compat) |
+| `False` | `True` | **`WindowsFirewallBlocker` (new)** |
+| `False` | `False` | `NoOpAgent` (degenerate fallback) |
+
+The blocker creates two rules per blocked IP — one inbound, one
+outbound — so the `block_ip` semantics match what `pfctl -t blocklist`
+provides on the Netgate. Both rules must succeed for the operation
+to count as success; partial success is reported as failure so the
+operator does not get a false sense of safety from a half-applied
+block.
+
+The blocker is fail-safe: every netsh invocation is wrapped in
+try/catch on `subprocess.CalledProcessError`, `OSError`, and the
+generic `Exception` (binary missing, no admin rights, firewall
+service down). Errors are logged and the documented failure return
+value (`False` / empty list) is surfaced — the agent never raises
+to the responder.
+
+### Permission requirements
+
+`netsh advfirewall firewall add rule` requires admin rights. WardSOAR
+runs in the operator's user context and the fail mode is loud (every
+blocked IP triggers an `ERROR` log mentioning the missing privilege)
+but safe (no silent-success scenario where the responder thinks it
+blocked but didn't).
+
+### What changed
+
+- **New module**:
+  `packages/wardsoar-pc/src/wardsoar/pc/windows_firewall.py`
+  — `WindowsFirewallBlocker` (~250 SLOC) with the five-method
+  `RemoteAgent` protocol surface plus internal helpers.
+- **`wardsoar.pc.win_paths`** — new `NETSH` constant pointing at
+  `%SystemRoot%\System32\netsh.exe`. Same defence-in-depth pattern
+  as the existing `POWERSHELL` / `MPCMDRUN` constants.
+- **`wardsoar.pc.main.Pipeline.__init__`** — three-way branch on
+  `(sources.netgate, sources.suricata_local)` selecting the
+  appropriate agent. The `RemoteAgentRegistry` registers it under
+  the name `"netgate"`, `"windows_firewall"`, or `"no_op"`.
+- **23 new tests** — 21 covering `WindowsFirewallBlocker` (validation
+  guards, protocol conformance, check_status, add/remove/is_blocked/
+  list, subprocess fail-safety) and 2 covering the new Pipeline
+  branching cases.
+
+### What's NOT in this release
+
+- **Local Suricata installer** — the operator who answers
+  `suricata_local=True` in the questionnaire still has to install
+  Suricata themselves. The `WindowsFirewallBlocker` ships as a
+  blocker and works without local Suricata (alerts can come from any
+  source the operator wires up); the integrated Suricata installer +
+  Npcap downloader is a separate follow-up.
+- **UAC elevation prompt** — when the operator launches WardSOAR
+  unprivileged, blocks via netsh fail with `access denied`. The
+  fail mode is loud (one ERROR per attempted block) but the launcher
+  could be improved to request elevation upfront in standalone-PC
+  mode.
+- **UI hide-when-Netgate-disabled** — the Netgate UI buttons are
+  still visible in standalone-PC mode; clicking them triggers the
+  guards from v0.22.21 (no crash, empty result widget).
+
+- **File**: `WardSOAR_0.22.22.msi`
+- **Tests**: 1493 green, 2 skipped (+23 vs v0.22.21)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+---
+
 ## v0.22.21 — 2026-04-25
 
 Wires the `sources:` key from v0.22.20 into the runtime
