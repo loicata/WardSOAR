@@ -71,6 +71,8 @@ component reference-count drop.
   naturally with the next release.
 
 - **File**: `WardSOAR_0.22.19.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `c81c3a681a075c3e3ae891a7469b0696ad3bfdd1b406a10f9212bf0fc194db75`
 - **Tests**: 1433 green, 2 skipped (-1 vs v0.22.18: the obsolete
   `TestSshEscapeHatch::test_ssh_property_returns_underlying_transport`
   test was removed)
