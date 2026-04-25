@@ -18,6 +18,73 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.19 — 2026-04-25
+
+Phase 3b.3.2 of the monorepo refactor — the four Netgate-specific
+modules (`netgate_audit`, `netgate_tamper`, `netgate_apply`,
+`netgate_custom_rules`) and `Pipeline.__init__` now consume the
+concrete `NetgateAgent` directly. The temporary `NetgateAgent.ssh`
+escape hatch added in v0.22.17 is gone, and the free-function helpers
+`migrate_alias_to_urltable(ssh)` / `apply_suricata_runmode(ssh)` are
+now reached through the agent's own methods inside the apply layer.
+
+Also fixes the MSI upgrade UX: starting with this release the wizard
+no longer offers the misleading "Repair / Remove" dialog when the
+operator double-clicks a newer MSI. The Show conditions in
+`WixUI_InstallDir` could not be overridden in WiX v4, so the UI was
+switched to `WixUI_Minimal` (welcome+EULA → progress → done, no
+maintenance dialog at all). The MajorUpgrade schedule was also moved
+to `afterInstallExecute` so the HKCU `AutoStartRunKey` Run-key entry
+the new install writes is no longer wiped by the old uninstall's
+component reference-count drop.
+
+### What changed
+
+- **`wardsoar.core.netgate_audit`** — `NetgateAuditor.__init__` and
+  `run_audit()` take `NetgateAgent` instead of `PfSenseSSH`. The
+  audit handlers call `agent.run_read_only(cmd, timeout=...)` exactly
+  like before — same surface, different concrete type.
+- **`wardsoar.core.netgate_tamper`** — `NetgateTamperDetector.__init__`
+  takes `NetgateAgent`; same `run_read_only` consumption pattern.
+- **`wardsoar.core.netgate_apply`** — every shipped handler
+  (`_apply_*`, `_verify_*`) and the `NetgateApplier` itself now take
+  `NetgateAgent`. The two Netgate-specific handlers
+  (`_apply_migrate_alias_to_urltable`,
+  `_apply_suricata_runmode_workers`) call the agent's own methods
+  (`agent.migrate_alias_to_urltable()`,
+  `agent.apply_suricata_runmode("workers")`) instead of the
+  free-function helpers — those helpers are still public and
+  importable for the agent's internal use.
+- **`wardsoar.core.netgate_custom_rules`** — `deploy_bundle()` takes
+  `NetgateAgent`.
+- **`wardsoar.pc.main`** — `Pipeline.__init__` passes
+  `self._netgate_agent` directly to every Netgate-specific call site
+  (audit / tamper / apply / custom_rules). The `.ssh` indirection is
+  gone.
+- **`wardsoar.core.remote_agents.netgate_agent`** — the temporary
+  `ssh` property is removed. The underlying `PfSenseSSH` is now a
+  pure implementation detail.
+- **`installer/ward.wxs`** — `WixUI_Minimal`,
+  `MajorUpgrade Schedule="afterInstallExecute"`, post-install launch
+  custom action condition widened to `NOT Installed OR
+  WIX_UPGRADE_DETECTED`. End-to-end upgrade smoke-test will happen
+  naturally with the next release.
+
+- **File**: `WardSOAR_0.22.19.msi`
+- **Tests**: 1433 green, 2 skipped (-1 vs v0.22.18: the obsolete
+  `TestSshEscapeHatch::test_ssh_property_returns_underlying_transport`
+  test was removed)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+### What's NOT in this release
+
+`stream_alerts()` abstraction stays out of scope until the Virus
+Sniff appliance lands and we have a second concrete agent to validate
+the design against (Phase 3b.4).
+
+---
+
 ## v0.22.18 — 2026-04-25
 
 Phase 3b.3 of the monorepo refactor — pipeline call sites now consume
