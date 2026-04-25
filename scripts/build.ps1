@@ -9,7 +9,7 @@
 .PARAMETER SkipMSI
     Skip WiX MSI step (for testing PyInstaller only).
 .PARAMETER Version
-    Override version string (default: read from src/__init__.py).
+    Override version string (default: read from packages/wardsoar-pc/src/wardsoar/pc/__init__.py).
 #>
 
 param(
@@ -123,8 +123,20 @@ if (-not (Test-Path $pipAuditPath)) {
 # because bandit routinely writes benign WARNINGs to stderr ("Test in comment:
 # required is not a test name") and PowerShell treats any stderr write as
 # a NativeCommandError under "Stop" mode.
+#
+# Scan every package src/ root explicitly. Bandit silently scans nothing
+# and exits 0 when handed a non-existent path, so the legacy "src/" target
+# (removed during the 2026-04-24 monorepo refactor) had been giving a
+# false-positive green for nine releases — caught during the v0.22.16
+# prod audit. Listing each src/ keeps tests and runtime data dirs
+# (``evidence/``, ``data/``, ``logs/``) outside the scan surface.
+$banditTargets = @(
+    "packages\wardsoar-core\src",
+    "packages\wardsoar-pc\src",
+    "packages\wardsoar-virus-sniff\src"
+)
 $ErrorActionPreference = "Continue"
-& $banditPath -r src/ -ll --quiet 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+& $banditPath -r @banditTargets -ll --quiet 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
 $banditExitCode = $LASTEXITCODE
 $ErrorActionPreference = "Stop"
 if ($banditExitCode -ne 0) {
