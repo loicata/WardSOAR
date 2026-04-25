@@ -136,6 +136,53 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+# ---------------------------------------------------------------------------
+# Coverage — per-layer targets (CLAUDE.md section 10, UI layering)
+# ---------------------------------------------------------------------------
+# Targets:
+#   wardsoar.core               90%   (business logic, must stay stable)
+#   wardsoar.pc.ui.controllers  80%   (will exist after V3 refactor)
+#   wardsoar.pc.ui              70%   (Qt widgets/views — harder to unit test)
+#   wardsoar.pc (non-ui)        80%   (Windows business logic)
+#
+# Per-package measurement:
+#   pytest --cov=wardsoar.core packages/wardsoar-core/tests/
+#   pytest --cov=wardsoar.pc   packages/wardsoar-pc/tests/
+#
+# The thresholds are NOT yet enforced via --cov-fail-under because the
+# baseline measurement (V2 of the UI layering work) is the next thing
+# we're doing. Once the baseline is captured and any gaps closed, the
+# thresholds will move into the pre-commit / CI gates.
+[tool.coverage.run]
+branch = false
+relative_files = true
+source = [
+    "packages/wardsoar-core/src/wardsoar",
+    "packages/wardsoar-pc/src/wardsoar",
+]
+omit = [
+    "*/__pycache__/*",
+    "*/evidence/*",
+    "*/build/*",
+    "*/dist/*",
+    "*.egg-info/*",
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = false
+skip_covered = false
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
+
 
 # ---------------------------------------------------------------------------
 # uv workspace — monorepo layout (Option 2, decided 2026-04-24)
