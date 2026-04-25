@@ -18,6 +18,132 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.16 — 2026-04-25
+
+Final UI-controller extraction (refactor V3.5) — `EngineWorker`
+is now a thin `QThread` lifecycle shell. The pipeline-processing
+concern (EVE ingestion + alert routing + healthcheck loop +
+asyncio loop ownership) moves to a new `PipelineController`.
+
+**Refactor V3 complete.** The 1067-SLOC god-class is gone:
+`EngineWorker` is down to 292 SLOC (-73%) of signal forwarding
+and one-line delegates. Every cohesive concern lives in its own
+controller under `wardsoar.pc.ui.controllers/`.
+
+- **File**: `WardSOAR_0.22.16.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `1fcdbde739ce141b2256e0a4b5c26681e0b6e5cee3df3178b4dad73aa6b26893`
+- **Tests**: 1399 green, 2 skipped (+29 — full unit coverage of
+  the new controller including async paths, healthcheck cadence,
+  fail-safe guards, and the cross-thread entry points)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+- **Coverage**: `wardsoar.pc.ui.controllers` package: **91.3 %**
+  (4 controllers, 458 statements; HistoryController +
+  ManualActionController + NetgateController at 100 %,
+  PipelineController at 83.1 % — the missing 17 % is
+  `bootstrap_in_thread` + the file-poll loop body, deterministic
+  only with a real thread)
+
+### What's new — for contributors
+
+- New module
+  `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/pipeline_controller.py`
+  (711 SLOC). Owns:
+  - **6 Qt signals** (`alert_received`, `metrics_updated`,
+    `activity_logged`, `status_changed`, `health_updated`,
+    `ip_blocked`).
+  - **Lifecycle**: `bootstrap_in_thread()` (called from
+    `EngineWorker.QThread.run()`) — creates the asyncio loop,
+    schedules the main coroutine + intel manager refresh +
+    process-attribution buffer + alerts-stats flush + purge,
+    then `loop.run_forever()` until `request_stop()` is called.
+  - **Cross-thread entry**: `on_ssh_line(line)` — marshals via
+    `loop.call_soon_threadsafe(_process_line, line)`.
+  - **Processing**: `_process_line` → `_process_alert_async`
+    (filtered / decision branches, IP enrichment in parallel for
+    src + dest, history persistence, ip_blocked toast trigger).
+  - **Healthchecks**: `_run_healthchecks_async` +
+    `_maybe_run_healthchecks_async` — periodic run with the
+    300 s default interval; only emit Activity rows on
+    degraded / failed.
+  - **Background**: `_alerts_stats_purge_loop` — initial purge +
+    24 h cadence, fail-safe to never crash the worker.
+  - **`loop` property** — sibling controllers borrow the loop
+    through their `loop_provider` callback so they always see
+    the current state (`None` before start, live afterwards,
+    `None` again after stop).
+- `EngineWorker` becomes a **thin QThread shell** (292 SLOC):
+  - Builds `HistoryController`, `IntelManager`, `HealthChecker`,
+    then `PipelineController` (which becomes the loop owner),
+    then `ManualActionController` and `NetgateController` (which
+    borrow the pipeline controller's loop via a closure).
+  - Forwards all 14 controller signals signal-to-signal so
+    existing `connect()` calls in `app.py` and the views keep
+    working unchanged.
+  - `run()`, `stop()`, `on_ssh_line()` are 1-line delegates to
+    `PipelineController`. The other 14 public methods are
+    1-line delegates to history / manual / netgate controllers.
+- `app.py:1177` updated: `self._engine._ward_mode = ...` →
+  `self._engine._pipeline_controller._ward_mode = ...` (the
+  attribute moved with the extraction).
+- Two existing tests in `test_ui.py` updated to reach into
+  `worker._pipeline_controller._loop` /
+  `worker._pipeline_controller._healthchecker` instead of the
+  legacy attributes on `EngineWorker`.
+- New test file
+  `packages/wardsoar-pc/tests/test_pipeline_controller.py` with
+  34 test methods across construction, cross-thread entry
+  points, request_stop, sync processing (`_process_line` /
+  `_process_new_lines`), async processing (
+  `_process_alert_async` for both result types + permission /
+  generic exception fail-safe paths), healthcheck cadence,
+  alerts_stats purge loop, IP enrichment fail-safe, and
+  `_main_loop` ssh + missing-file branches. Two of them flip
+  `ward_soar.propagate` back to True for the duration of a
+  `caplog` assertion — the `wardsoar.core.logger.setup_logger`
+  initialisation (run by some other tests) sets it to False,
+  which black-holes records before they reach the root caplog
+  handler.
+
+### EngineWorker SLOC trajectory — refactor V3 complete
+
+| Version | SLOC | Δ vs origine | Δ vs précédent |
+|---------|-----:|-------------:|---------------:|
+| v0.22.11 (pre-refactor)        | 1067 |     — |     — |
+| v0.22.12 (after V3.2 History)  |  989 |   -78 |   -78 |
+| v0.22.13 (after V3.4 Manual)   |  933 |  -134 |   -56 |
+| v0.22.14 (after V3.3 Netgate)  |  806 |  -261 |  -127 |
+| **v0.22.16 (after V3.5 Pipeline)** | **292** | **-775** | **-514** |
+
+`EngineWorker` is now exclusively signal forwarding + one-line
+delegates. Zero business logic. Refactor V3 — done.
+
+### Why this matters
+
+Splitting the god-class was about *enabling* per-concern
+unit testing. The four controllers can now be exercised
+without spinning up a real `QThread` or `QApplication` (where
+not strictly required by Qt signal machinery), which means:
+- 105+ controller tests run in ~3 s
+- 91.3 % combined coverage (vs ~52 % when everything was inside
+  `EngineWorker` and only end-to-end-testable)
+- Each concern can evolve independently: a future change to the
+  Netgate-apply safety rails has zero risk of breaking the
+  history-loading code path
+
+### Documented limitation
+
+`PipelineController.bootstrap_in_thread()` and the file-mode
+polling loop are not unit-tested directly — they would require
+spinning a real thread and a real loop, which is what the
+`TestActivityViewEventShape` integration tests in `test_ui.py`
+already do at the `EngineWorker` level. Coverage on the
+controller stays at 83.1 % (above the 80 % target) thanks to the
+remaining 30+ tests on the request-style methods.
+
+---
+
 ## v0.22.15 — 2026-04-25
 
 Smarter handling of HTTP 429 ("Too Many Requests") responses from
