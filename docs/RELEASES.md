@@ -63,6 +63,8 @@ that registry.
   but nothing is blocked anywhere.
 
 - **File**: `WardSOAR_0.22.21.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `6b6e0c223e63f8003093b5ca267c26123e0c1ba20f7e6855cd2779b1867988cb`
 - **Tests**: 1470 green, 2 skipped (+17 vs v0.22.20: 7 NoOpAgent
   unit tests + 10 Pipeline source-topology branching tests)
 - **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
