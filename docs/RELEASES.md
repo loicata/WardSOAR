@@ -18,6 +18,75 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.11 — 2026-04-25
+
+UI architecture decision and enforcement (no functional change).
+WardSOAR keeps a 100 % native PySide6 + Fluent Design UI; business
+logic stays Qt-free. Three enforcement mechanisms now sit on top
+of the layering, and the coverage baseline is captured for future
+work.
+
+- **File**: `WardSOAR_0.22.11.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `013498c499c3af2394ed16e62d0f196386d997b4597984ec46e5ed5b04db734a`
+- **Tests**: 1281 green, 2 skipped (+2 from v0.22.10 — the
+  `test_manual_reviews.py` split kept the same count of assertions
+  but added the architectural guard rail)
+- **Quality gates**: black, ruff (with new TID251 banned-api),
+  mypy --strict, bandit, pip-audit — all pass
+
+### What's new — for contributors
+
+- `[tool.ruff.lint.flake8-tidy-imports.banned-api]` in
+  `pyproject.toml` rejects `from PySide6` / `from qfluentwidgets`
+  imports anywhere outside `packages/wardsoar-pc/.../ui/`.
+- New architectural test
+  `packages/wardsoar-core/tests/test_architecture.py` runs in
+  every CI sweep and on every pre-commit. Sanity-checked by a
+  guard that fails if the scanner sees fewer than 50 files
+  (catches misconfigured paths).
+- New `.pre-commit-config.yaml` runs the five quality gates on
+  every commit (black, ruff, mypy --strict, bandit, plus the
+  architectural test). pip-audit is wired as a manual stage.
+  Install once with `.venv\Scripts\pre-commit install`.
+- New `[tool.coverage]` configuration in `pyproject.toml`.
+  Baseline captured in `docs/COVERAGE.md` (core 85.7 %, pc-non-ui
+  ~85 %, pc.ui ~52 %). Per-layer targets documented.
+- New `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/`
+  scaffolding with a migration plan (README.md). The legacy
+  `EngineWorker` god-class will be split into thematic controllers
+  in follow-up commits.
+
+### Real bug surfaced and fixed by the new test
+
+- `test_manual_reviews.py` mixed Qt dialog tests with core storage
+  tests. Split into:
+  - `packages/wardsoar-core/tests/test_manual_reviews.py` (storage
+    only, Qt-free)
+  - `packages/wardsoar-pc/tests/test_manual_review_dialog.py`
+    (Qt dialog, with `qapp` fixture)
+
+### Stale code cleaned up
+
+- `setup_wizard.py:1116` had `from src import win_paths` left over
+  from the pre-monorepo layout. Replaced with
+  `from wardsoar.pc import win_paths`. This was masked because
+  `mypy --strict` had not been run on the full pc src tree before.
+
+### No breaking changes
+Operators upgrading from v0.22.10 see no behaviour difference.
+Configuration files, MSI install path, uninstall procedure and
+shipped UI text are all unchanged.
+
+### Documentation
+- `CLAUDE.md` gets section 10 ("UI architecture & layering").
+- `docs/ARCHITECTURE.md` gets section 5.9 (decision log entry).
+- `docs/COVERAGE.md` (new) tracks per-layer coverage and roadmap.
+- `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/README.md`
+  documents the migration plan for the EngineWorker split.
+
+---
+
 ## v0.22.10 — 2026-04-25
 
 Fix the About dialog that displayed ``v0.0.1`` on a v0.22.9 install.
