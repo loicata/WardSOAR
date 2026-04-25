@@ -18,6 +18,75 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.13 — 2026-04-25
+
+Second UI-controller extraction (refactor V3.4). Operator-driven
+rollback and manual-block requests move to a new
+`ManualActionController`. Behaviour is preserved end to end; only
+the call structure changes.
+
+- **File**: `WardSOAR_0.22.13.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `48ad040805549c4ab963f9bfb34f0c163b456861798c689a5d87fc547fcff97d`
+- **Tests**: 1328 green, 2 skipped (+17 — full unit coverage of
+  the new controller using mocked loops + a real-loop sync-to-async
+  bridge test)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+- **Coverage**: `wardsoar.pc.ui.controllers` package now at **100%**
+  (HistoryController + ManualActionController, target was 80%)
+
+### What's new — for contributors
+
+- New module
+  `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/manual_action_controller.py`
+  (223 SLOC). Owns `request_rollback` and `request_manual_block`
+  plus the corresponding async workers (`_execute_rollback`,
+  `_execute_manual_block`) and the two Qt signals
+  (`rollback_completed`, `manual_block_completed`).
+- `EngineWorker.__init__` now instantiates `ManualActionController`
+  and forwards both signals via Qt signal-to-signal connections
+  (`controller.rollback_completed.connect(self.rollback_completed)`)
+  so existing `connect()` calls in `app.py` keep working unchanged.
+- `EngineWorker.request_rollback` / `request_manual_block` become
+  one-line delegates (each ~3 lines).
+- The async closure (`_run()`) that previously lived inside each
+  request method was promoted to a real method
+  (`_execute_rollback` / `_execute_manual_block`). This is a small
+  testability refactor: tests can now `await` the async layer
+  directly without having to spin up an event loop.
+- New test file
+  `packages/wardsoar-pc/tests/test_manual_action_controller.py`
+  with 17 test methods across construction, sync-layer fail-safe
+  paths (loop None / not running), async-layer outcomes (success,
+  refusal, exception), the synthetic CONFIRMED verdict structure,
+  and an end-to-end sync→async bridge test using a real asyncio
+  loop.
+
+### Why this matters
+
+V3.4 validates the façade-with-delegation pattern on a second
+concern that — unlike V3.2 — needs Qt signal forwarding.
+Confirmed:
+1. Signal-to-signal `connect()` is enough; no manual re-emit slot
+   needed.
+2. The loop reference can be borrowed lazily through a
+   `loop_provider` callback so the controller does not need to
+   know about the worker's lifecycle.
+3. Promoting closures to methods is a strict win for testability
+   without changing observable behaviour.
+
+The pattern is now ready to be applied to the two remaining
+concerns (Netgate ops V3.3 ~250 SLOC, EVE pipeline V3.5 ~300 SLOC).
+
+### `EngineWorker` SLOC trajectory
+
+- v0.22.11 (pre-refactor): **1067 SLOC**
+- v0.22.12 (after V3.2): 989 SLOC (-78)
+- **v0.22.13 (after V3.4): 933 SLOC (-134 vs origin, -56 vs prev)**
+
+---
+
 ## v0.22.12 — 2026-04-25
 
 First UI-controller extraction (refactor V3.2). The legacy
