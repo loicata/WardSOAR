@@ -52,6 +52,7 @@ from wardsoar.core.api_keys_registry import (
     AUTO_ENABLED_SOURCES,
     Tier,
 )
+from wardsoar.pc.ui.sources_questionnaire import SourceChoices
 
 # Legacy field-name aliases kept so existing wizard code (summary
 # page, validation step, _generate_env) can keep referencing the
@@ -101,12 +102,26 @@ class SetupWizard(QDialog):
 
     Args:
         data_dir: Writable data directory for config output.
+        sources: Optional answers from the upstream
+            :class:`SourcesQuestionnaire`. When supplied, pages whose
+            inputs only matter for an unselected source are skipped
+            (e.g. the pfSense SSH key page is hidden when the operator
+            said they have no Netgate). When ``None``, the wizard
+            behaves exactly like before — every page is shown — which
+            keeps existing tests and the legacy "edit config" entry
+            point working unchanged.
         parent: Parent widget.
     """
 
-    def __init__(self, data_dir: Path, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        sources: Optional[SourceChoices] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self._data_dir = data_dir
+        self._sources = sources
         self.setWindowTitle("WardSOAR — Setup Wizard")
         self.setMinimumSize(800, 700)
         self.resize(900, 750)
@@ -114,6 +129,20 @@ class SetupWizard(QDialog):
         self._fields: dict[str, Any] = {}
         self._setup_ui()
         self._apply_theme()
+
+    def _is_page_relevant(self, page_index: int) -> bool:
+        """Whether the given page should be shown given the source answers.
+
+        The pfSense SSH page (and its credentials) is meaningless if the
+        operator said they have no Netgate; skip it. Every other page is
+        always shown — they collect data WardSOAR needs regardless of
+        which alert source feeds the pipeline.
+        """
+        if self._sources is None:
+            return True
+        if page_index == PAGE_PFSENSE_SSH and not self._sources.netgate:
+            return False
+        return True
 
     def _setup_ui(self) -> None:
         """Build the wizard layout."""
@@ -822,7 +851,12 @@ class SetupWizard(QDialog):
         if error:
             return
 
-        self._current_page += 1
+        # Walk forward over any pages that are not relevant under the
+        # current source choices (e.g. pfSense SSH when Netgate=No).
+        next_page = self._current_page + 1
+        while next_page < TOTAL_PAGES - 1 and not self._is_page_relevant(next_page):
+            next_page += 1
+        self._current_page = next_page
         self._stack.setCurrentIndex(self._current_page)
 
         if self._current_page == PAGE_SUMMARY:
@@ -831,9 +865,12 @@ class SetupWizard(QDialog):
         self._update_nav()
 
     def _go_back(self) -> None:
-        """Go back to the previous page."""
-        if self._current_page > 0:
-            self._current_page -= 1
+        """Go back to the previous page (skipping irrelevant pages)."""
+        prev_page = self._current_page - 1
+        while prev_page > 0 and not self._is_page_relevant(prev_page):
+            prev_page -= 1
+        if prev_page >= 0 and self._current_page > 0:
+            self._current_page = prev_page
             self._stack.setCurrentIndex(self._current_page)
             self._update_nav()
 
@@ -1058,6 +1095,19 @@ class SetupWizard(QDialog):
             "app": {"minimize_to_tray": True, "single_instance": True, "save_window_state": True},
             "replay": {"enabled": True, "decision_log_path": decision_log},
         }
+
+        # Persist the source-topology answers from the upstream
+        # SourcesQuestionnaire under a top-level ``sources`` key, so
+        # the runtime RemoteAgentRegistry knows which agents to
+        # instantiate. Skipped when no questionnaire ran (legacy /
+        # test paths) — the runtime defaults to "Netgate enabled" in
+        # that case for backward compatibility with pre-v0.22.20 configs.
+        if self._sources is not None:
+            config["sources"] = {
+                "netgate": self._sources.netgate,
+                "virus_sniff": self._sources.virus_sniff,
+                "suricata_local": self._sources.suricata_local,
+            }
 
         config_dir = data_dir / "config"
         config_dir.mkdir(parents=True, exist_ok=True)

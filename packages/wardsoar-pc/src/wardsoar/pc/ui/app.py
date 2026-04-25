@@ -427,12 +427,27 @@ class WardApp:
             box.exec()
             sys.exit(0)
 
-        # Launch setup wizard on first run (before load_config creates defaults)
+        # Launch setup flow on first run (before load_config creates
+        # defaults). The flow has two stages now (v0.22.20):
+        #   1. SourcesQuestionnaire — three Yes/No questions about which
+        #      alert sources the operator has (Netgate / Virus Sniff /
+        #      local Suricata) plus a recap. Cancelling exits the app.
+        #   2. SetupWizard — the eleven-page detailed config flow,
+        #      gated on the source choices (e.g. pfSense SSH page is
+        #      skipped when Netgate=No).
         if first_run:
             from wardsoar.core.config import get_data_dir
             from wardsoar.pc.ui.setup_wizard import SetupWizard
+            from wardsoar.pc.ui.sources_questionnaire import SourcesQuestionnaire
 
-            wizard = SetupWizard(data_dir=get_data_dir())
+            questionnaire = SourcesQuestionnaire()
+            if questionnaire.exec() != SourcesQuestionnaire.DialogCode.Accepted:
+                sys.exit(0)
+
+            wizard = SetupWizard(
+                data_dir=get_data_dir(),
+                sources=questionnaire.choices,
+            )
             if wizard.exec() != SetupWizard.DialogCode.Accepted:
                 sys.exit(0)
 
