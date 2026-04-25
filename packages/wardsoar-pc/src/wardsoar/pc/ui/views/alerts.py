@@ -192,7 +192,8 @@ def _format_time_cell(alert: dict[str, Any]) -> str:
     Historical alerts persisted before v0.22.3 stored only ``HH:MM:SS``
     in the ``time`` field. To display a full date+time in the table
     without migrating the history file, fall back to the ISO ``_ts``
-    attached to every persisted entry by ``EngineWorker._persist_alert``.
+    attached to every persisted entry by
+    ``HistoryController.persist_alert``.
     Live alerts built by v0.22.3+ already carry the full format in
     ``time``, so the extra derivation is a no-op for them.
     """

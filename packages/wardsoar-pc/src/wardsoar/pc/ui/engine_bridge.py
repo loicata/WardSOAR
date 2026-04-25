@@ -28,6 +28,7 @@ from wardsoar.pc.healthcheck import HealthChecker
 from wardsoar.pc.main import FilteredResult
 from wardsoar.core.models import DecisionRecord
 from wardsoar.core.watcher import EveJsonWatcher
+from wardsoar.pc.ui.controllers import HistoryController
 
 if TYPE_CHECKING:
     from wardsoar.pc.main import Pipeline
@@ -130,11 +131,17 @@ class EngineWorker(QThread):
         # Async event loop — created in run(), used by create_task()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
-        # Alert history file for persistence across restarts
+        # Alert history file for persistence across restarts.
+        # v0.22.12 — extraction step V3.2: the actual JSONL read/write
+        # logic now lives in :class:`HistoryController` so it can be
+        # tested without a QApplication. EngineWorker keeps the
+        # history-related public methods as thin delegates to preserve
+        # backward compatibility with ``app.py`` and the alerts view.
         from wardsoar.core.config import get_data_dir
 
-        self._history_path = get_data_dir() / "logs" / "alerts_history.jsonl"
-        self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        self._history_controller = HistoryController(
+            get_data_dir() / "logs" / "alerts_history.jsonl"
+        )
 
         # v0.11.0 — central intelligence feeds manager. Built at
         # construction so the registries can load their on-disk
@@ -535,132 +542,47 @@ class EngineWorker(QThread):
 
         self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
 
-    def _persist_alert(self, alert_data: dict[str, Any]) -> None:
-        """Append an alert to the history file for persistence across restarts."""
-        try:
-            # Add ISO timestamp for proper time-based filtering on reload
-            entry = dict(alert_data)
-            entry["_ts"] = datetime.now(timezone.utc).isoformat()
-            with open(self._history_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, default=str) + "\n")
-        except Exception:
-            logger.debug("Failed to persist alert to history", exc_info=True)
+    # ------------------------------------------------------------------
+    # History façade — delegates to :class:`HistoryController`.
+    #
+    # The controller (extracted in v0.22.12, V3.2) owns the actual
+    # JSONL read/write logic. EngineWorker re-exposes the same public
+    # API so existing callers in ``app.py`` and the alerts view do
+    # not have to change. All five methods below are 1-line passthroughs.
+    # ------------------------------------------------------------------
 
     @property
     def history_path(self) -> Path:
-        """Path of the active ``alerts_history.jsonl`` file.
-
-        Exposed so :class:`WardApp` can run :func:`rotate_if_needed`
-        at startup without reaching into a private attribute.
-        """
-        return self._history_path
+        """Path of the active ``alerts_history.jsonl`` file."""
+        return self._history_controller.history_path
 
     def load_alert_history(
         self,
         limit: Optional[int] = None,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Load persisted alerts from the active history file.
-
-        v0.22.1 — the active file is bounded to the current calendar
-        month by :func:`rotate_if_needed`. A busy month can still
-        reach thousands of entries, so the UI pages through it:
-        200 at startup, then 200 more on each "Load older" click.
-
-        Args:
-            limit: Cap on returned entries. ``None`` = no cap
-                (load everything). The UI uses 200 on startup.
-            offset: Skip the last ``offset`` entries before applying
-                ``limit``. Lets the UI page backward through the
-                month without re-parsing the whole file each click.
-
-        Returns:
-            List of alert data dicts, most recent last. Empty on
-            any read / parse error (fail-safe).
-        """
-        alerts: list[dict[str, Any]] = []
-        if not self._history_path.exists():
-            return alerts
-        try:
-            with open(self._history_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        try:
-                            alerts.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-        except Exception:
-            logger.warning("Failed to load alert history", exc_info=True)
-            return alerts
-
-        if offset:
-            alerts = alerts[: len(alerts) - offset] if offset < len(alerts) else []
-        if limit is not None and limit >= 0 and limit < len(alerts):
-            alerts = alerts[-limit:]
-        return alerts
+        """Delegate to :meth:`HistoryController.load_alert_history`."""
+        return self._history_controller.load_alert_history(limit=limit, offset=offset)
 
     def load_history_page(
         self, older_than_count: int, page_size: int = 200
     ) -> list[dict[str, Any]]:
-        """Paginate older entries of the current month on operator request.
-
-        Args:
-            older_than_count: Number of entries the UI already has
-                displayed (offset from the end of the active file).
-            page_size: How many entries to return.
-
-        Returns:
-            The next ``page_size`` entries older than the current
-            view. Empty when the active file (current month) is
-            exhausted — the UI then falls back to the Archives
-            menu for past months.
-        """
-        return self.load_alert_history(limit=page_size, offset=older_than_count)
+        """Delegate to :meth:`HistoryController.load_history_page`."""
+        return self._history_controller.load_history_page(
+            older_than_count=older_than_count, page_size=page_size
+        )
 
     def list_history_archives(self) -> list[dict[str, Any]]:
-        """Return the available monthly archives, newest first.
-
-        Used by the UI "Archives" menu. Each entry carries the
-        archive path, the ``YYYY-MM`` month and the compressed
-        size so the dropdown can render "March 2026 — 42 kB".
-        """
-        from wardsoar.core.history_rotator import list_archives
-
-        infos = list_archives(self._history_path)
-        # v0.22.1 — archives are now monthly; expose the field as
-        # ``month`` (``YYYY-MM``) so the UI label can read "March 2026"
-        # rather than try to parse a dashed date.
-        return [
-            {"path": info.path, "month": info.month_iso, "size_bytes": info.size_bytes}
-            for info in infos
-        ]
+        """Delegate to :meth:`HistoryController.list_history_archives`."""
+        return self._history_controller.list_history_archives()
 
     def load_history_from_archive(
         self, archive_path: str, limit: Optional[int] = None
     ) -> list[dict[str, Any]]:
-        """Read a gzipped archive and return its alerts.
-
-        Args:
-            archive_path: Path as returned by
-                :meth:`list_history_archives`.
-            limit: Cap on returned entries. ``None`` = the whole archive.
-
-        Returns:
-            List of alert dicts. Malformed archive → empty list.
-        """
-        from pathlib import Path as _Path
-
-        from wardsoar.core.history_rotator import load_archive
-
-        raw_lines = load_archive(_Path(archive_path), limit=limit)
-        alerts: list[dict[str, Any]] = []
-        for line in raw_lines:
-            try:
-                alerts.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return alerts
+        """Delegate to :meth:`HistoryController.load_history_from_archive`."""
+        return self._history_controller.load_history_from_archive(
+            archive_path=archive_path, limit=limit
+        )
 
     def on_ssh_line(self, line: str) -> None:
         """Process a line received from the SSH streamer (cross-thread safe)."""
@@ -876,7 +798,7 @@ class EngineWorker(QThread):
                 # newly-received alert benefits from the last known
                 # good data before the first background refresh runs.
                 intel_manager=self._intel_manager,
-                history_path=self._history_path,
+                history_path=self._history_controller.history_path,
                 do_rdns=True,
             )
         except Exception:  # noqa: BLE001 — the enrichment is best-effort
@@ -964,7 +886,7 @@ class EngineWorker(QThread):
                 ),
             }
             self.alert_received.emit(filtered_data)
-            self._persist_alert(filtered_data)
+            self._history_controller.persist_alert(filtered_data)
             # v0.8.6 B2: per-alert activity rows removed from the
             # System Activity tab — the alert is already fully
             # visible in the Alerts tab (with a detail panel).
@@ -1032,7 +954,7 @@ class EngineWorker(QThread):
             ),
         }
         self.alert_received.emit(alert_data)
-        self._persist_alert(alert_data)
+        self._history_controller.persist_alert(alert_data)
 
         # v0.6.4 — surface every successful IP block as a distinct
         # signal so the tray manager can pop a toast. Without this the
