@@ -61,6 +61,8 @@ and stays out of scope until the Virus Sniff appliance lands and we have
 a second concrete agent to validate the design against (Phase 3b.4).
 
 - **File**: `WardSOAR_0.22.18.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `7c5f6c5cf06665df5259a8837dd8854283f5e8826fd98f5b14fa222ec893a69f`
 - **Tests**: 1434 green, 2 skipped (zero regression vs v0.22.17 — the
   change is type-system-only and existing `MagicMock(spec=PfSenseSSH)`
   fixtures still satisfy the `RemoteAgent` protocol structurally)
