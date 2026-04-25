@@ -88,6 +88,8 @@ blocked but didn't).
   guards from v0.22.21 (no crash, empty result widget).
 
 - **File**: `WardSOAR_0.22.22.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `9252f36cc90334b8600feadd89cf3f90a3994e5e982a470eca3dfef05e5b3dd6`
 - **Tests**: 1493 green, 2 skipped (+23 vs v0.22.21)
 - **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
   — all pass
