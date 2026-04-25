@@ -23,17 +23,32 @@ from wardsoar.core.netgate_apply import (
 
 
 class _FakeSSH:
-    """Programmable SSH stand-in matching :class:`PfSenseSSH.run_read_only`."""
+    """Programmable ``NetgateAgent`` stand-in for the safe-apply harness.
+
+    Mirrors only the surface the ``NetgateApplier`` and shipped handlers
+    actually call — ``run_read_only`` for SSH-style probes plus the two
+    Netgate-specific operations (``migrate_alias_to_urltable``,
+    ``apply_suricata_runmode``) that wrap the legacy free functions.
+    The ``apply_*_result`` knobs let a test pre-program the outcome the
+    Netgate-specific handlers should observe without faking the underlying
+    free function.
+    """
 
     def __init__(
         self,
         responses: dict[str, tuple[bool, str]] | None = None,
         default: tuple[bool, str] = (True, ""),
+        migrate_alias_result: object | None = None,
+        suricata_runmode_result: object | None = None,
     ) -> None:
         self._responses = responses or {}
         self._default = default
         self.calls: list[str] = []
         self._host = "fake-netgate"
+        self._migrate_alias_result = migrate_alias_result
+        self._suricata_runmode_result = suricata_runmode_result
+        self.migrate_alias_calls: int = 0
+        self.suricata_runmode_calls: list[str] = []
 
     async def run_read_only(self, cmd: str, timeout: int = 10) -> tuple[bool, str]:
         self.calls.append(cmd)
@@ -41,6 +56,22 @@ class _FakeSSH:
             if needle in cmd:
                 return reply
         return self._default
+
+    async def migrate_alias_to_urltable(self, alias_name: str = "blocklist") -> object:
+        from wardsoar.core.remote_agents.pfsense_alias_migrate import AliasMigrationResult
+
+        self.migrate_alias_calls += 1
+        if self._migrate_alias_result is not None:
+            return self._migrate_alias_result
+        return AliasMigrationResult(success=True, preserved_entries=0, message="fake ok")
+
+    async def apply_suricata_runmode(self, target: str = "workers") -> object:
+        from wardsoar.core.remote_agents.pfsense_suricata_tune import SuricataTuneResult
+
+        self.suricata_runmode_calls.append(target)
+        if self._suricata_runmode_result is not None:
+            return self._suricata_runmode_result
+        return SuricataTuneResult(success=True, instances_changed=1, message="fake ok")
 
 
 def _make_applier(tmp_path: Path, ssh: _FakeSSH | None = None) -> NetgateApplier:

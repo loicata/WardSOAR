@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.netgate_agent import NetgateAgent
 
 logger = logging.getLogger("ward_soar.netgate_tamper")
 
@@ -305,7 +305,7 @@ class NetgateTamperDetector:
 
     def __init__(
         self,
-        ssh: "PfSenseSSH",
+        ssh: "NetgateAgent",
         baseline_path: Path,
         host: Optional[str] = None,
     ) -> None:

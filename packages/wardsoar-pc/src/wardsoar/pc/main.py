@@ -459,7 +459,7 @@ class Pipeline:
         """
         from wardsoar.core.netgate_audit import run_audit
 
-        result = await run_audit(self._netgate_agent.ssh, self._config)
+        result = await run_audit(self._netgate_agent, self._config)
         self._last_audit_result = result
         logger.info(
             "netgate_audit: %d findings in %.2fs, any_critical_ko=%s",
@@ -485,7 +485,7 @@ class Pipeline:
             from wardsoar.core.netgate_tamper import NetgateTamperDetector
 
             self._tamper_detector = NetgateTamperDetector(
-                ssh=self._netgate_agent.ssh,
+                ssh=self._netgate_agent,
                 baseline_path=get_data_dir() / "netgate_baseline.json",
                 host=self._config.network.get("pfsense_ip", ""),
             )
@@ -593,7 +593,7 @@ class Pipeline:
         from wardsoar.core.netgate_custom_rules import build_bundle, deploy_bundle
 
         bundle = build_bundle(self._known_actors)
-        result = await deploy_bundle(self._netgate_agent.ssh, bundle)
+        result = await deploy_bundle(self._netgate_agent, bundle)
         if result.success:
             logger.warning(
                 "netgate_custom_rules: deployed %d rules (%d bytes) to %s",
@@ -618,7 +618,7 @@ class Pipeline:
         from wardsoar.core.netgate_apply import NetgateApplier
 
         applier = NetgateApplier(
-            ssh=self._netgate_agent.ssh,
+            ssh=self._netgate_agent,
             backup_dir=get_data_dir() / "netgate_backups",
         )
         self._netgate_applier = applier

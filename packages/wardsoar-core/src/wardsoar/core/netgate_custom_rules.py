@@ -50,7 +50,7 @@ from typing import TYPE_CHECKING, Iterable, Optional
 
 if TYPE_CHECKING:
     from wardsoar.core.known_bad_actors import KnownActorsRegistry
-    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.netgate_agent import NetgateAgent
 
 logger = logging.getLogger("ward_soar.netgate_custom_rules")
 
@@ -381,7 +381,7 @@ class DeployResult:
 
 
 async def deploy_bundle(
-    ssh: "PfSenseSSH",
+    ssh: "NetgateAgent",
     bundle: RulesBundle,
     remote_path: str = REMOTE_RULES_PATH,
 ) -> DeployResult:

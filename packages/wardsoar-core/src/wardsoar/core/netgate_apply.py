@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 if TYPE_CHECKING:
-    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.netgate_agent import NetgateAgent
 
 logger = logging.getLogger("ward_soar.netgate_apply")
 
@@ -100,8 +100,8 @@ class HandlerSpec:
         description: One-line label shown in the UI.
     """
 
-    apply_fn: Callable[["PfSenseSSH"], Awaitable[tuple[bool, str]]]
-    verify_fn: Callable[["PfSenseSSH"], Awaitable[tuple[bool, str]]]
+    apply_fn: Callable[["NetgateAgent"], Awaitable[tuple[bool, str]]]
+    verify_fn: Callable[["NetgateAgent"], Awaitable[tuple[bool, str]]]
     touches_config_xml: bool
     description: str
 
@@ -156,13 +156,13 @@ _CMD_ALIAS_URLTABLE_VERIFY = (
 )
 
 
-async def _run_with_trace(ssh: "PfSenseSSH", cmd: str, timeout: int = 30) -> tuple[bool, str]:
+async def _run_with_trace(ssh: "NetgateAgent", cmd: str, timeout: int = 30) -> tuple[bool, str]:
     """Thin wrapper that surfaces both stdout and failure mode."""
     ok, out = await ssh.run_read_only(cmd, timeout=timeout)
     return ok, out
 
 
-async def _apply_rule_update(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _apply_rule_update(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Trigger pfSense's Suricata rule-update script.
 
     This pulls ET Open / Snort Community rules from their configured
@@ -174,7 +174,7 @@ async def _apply_rule_update(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return ok, out[-1800:] if out else ""
 
 
-async def _verify_rules_loaded(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _verify_rules_loaded(ssh: "NetgateAgent") -> tuple[bool, str]:
     ok, out = await _run_with_trace(ssh, _CMD_RULES_COUNT, timeout=15)
     if not ok:
         return False, out
@@ -189,7 +189,7 @@ async def _verify_rules_loaded(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return True, f"{total} rules loaded"
 
 
-async def _apply_start_suricata(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _apply_start_suricata(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Start the Suricata service on every configured interface.
 
     Uses pfSense's rc.d script entry point, which iterates instances
@@ -200,7 +200,7 @@ async def _apply_start_suricata(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return ok, out[-2000:] if out else ""
 
 
-async def _verify_suricata_running(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _verify_suricata_running(ssh: "NetgateAgent") -> tuple[bool, str]:
     ok, out = await _run_with_trace(ssh, _CMD_SURICATA_PIDS_VERIFY, timeout=15)
     if not ok:
         return False, out
@@ -210,7 +210,7 @@ async def _verify_suricata_running(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return True, f"{len(pids)} suricata PID(s) running"
 
 
-async def _apply_create_blocklist(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _apply_create_blocklist(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Create the ``blocklist`` pf table if it does not exist.
 
     *Transient by design* — the table disappears on next ``pfctl -f
@@ -223,7 +223,7 @@ async def _apply_create_blocklist(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return ok, out
 
 
-async def _verify_blocklist_present(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _verify_blocklist_present(ssh: "NetgateAgent") -> tuple[bool, str]:
     ok, out = await _run_with_trace(ssh, _CMD_BLOCKLIST_VERIFY, timeout=15)
     if not ok:
         return False, out
@@ -232,7 +232,7 @@ async def _verify_blocklist_present(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return True, "table present in pfctl -s Tables"
 
 
-async def _apply_migrate_alias_to_urltable(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _apply_migrate_alias_to_urltable(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Convert the ``blocklist`` alias from host to urltable (Phase 7h).
 
     A host-type alias stores its IPs inside ``config.xml``, which
@@ -254,20 +254,15 @@ async def _apply_migrate_alias_to_urltable(ssh: "PfSenseSSH") -> tuple[bool, str
     this runs (``touches_config_xml=True``), and will restore it if
     our post-verify fails.
     """
-    # Imported lazily so the mere presence of the handler spec in the
-    # registry does not pull the migration orchestrator into every
-    # Applier client (tests exercise handlers without SSH).
-    from wardsoar.core.remote_agents.pfsense_alias_migrate import migrate_alias_to_urltable
-
     try:
-        result = await migrate_alias_to_urltable(ssh)
+        result = await ssh.migrate_alias_to_urltable()
     except Exception as exc:  # noqa: BLE001 — fail-safe reporting
         logger.exception("migrate_alias_to_urltable raised")
         return False, repr(exc)
     return result.success, result.message
 
 
-async def _verify_alias_persistent(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _verify_alias_persistent(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Confirm the blocklist alias is urltable AND the file is on disk."""
     ok, out = await _run_with_trace(ssh, _CMD_ALIAS_URLTABLE_VERIFY, timeout=15)
     if not ok:
@@ -277,7 +272,7 @@ async def _verify_alias_persistent(ssh: "PfSenseSSH") -> tuple[bool, str]:
     return True, "blocklist alias is urltable and seed file exists"
 
 
-async def _apply_suricata_runmode_workers(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _apply_suricata_runmode_workers(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Flip every Suricata instance's runmode from autofp to workers.
 
     On a Netgate 4200 (4-core ARM) the ``workers`` runmode runs one
@@ -294,17 +289,15 @@ async def _apply_suricata_runmode_workers(ssh: "PfSenseSSH") -> tuple[bool, str]
     Phase 7h — the change survives every GUI save, reboot and
     package upgrade.
     """
-    from wardsoar.core.remote_agents.pfsense_suricata_tune import apply_suricata_runmode
-
     try:
-        result = await apply_suricata_runmode(ssh, target="workers")
+        result = await ssh.apply_suricata_runmode("workers")
     except Exception as exc:  # noqa: BLE001 — fail-safe reporting
         logger.exception("apply_suricata_runmode raised")
         return False, repr(exc)
     return result.success, result.message
 
 
-async def _verify_suricata_runmode_workers(ssh: "PfSenseSSH") -> tuple[bool, str]:
+async def _verify_suricata_runmode_workers(ssh: "NetgateAgent") -> tuple[bool, str]:
     """Confirm at least one regenerated YAML is now in workers mode."""
     ok, out = await _run_with_trace(
         ssh,
@@ -384,7 +377,7 @@ class NetgateApplier:
 
     _BACKUP_CMD = "cat /cf/conf/config.xml 2>/dev/null || true"
 
-    def __init__(self, ssh: "PfSenseSSH", backup_dir: Path) -> None:
+    def __init__(self, ssh: "NetgateAgent", backup_dir: Path) -> None:
         self._ssh = ssh
         self._backup_dir = Path(backup_dir)
         self._backup_dir.mkdir(parents=True, exist_ok=True)

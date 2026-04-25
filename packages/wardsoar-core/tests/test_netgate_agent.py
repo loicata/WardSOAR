@@ -62,10 +62,12 @@ class TestNetgateAgentFactory:
             ssh_user="admin",
             ssh_key_path="/dev/null",
         )
-        assert isinstance(agent.ssh, PfSenseSSH)
-        # The underlying transport carries the supplied parameters.
-        assert agent.ssh._host == "192.0.2.10"  # noqa: SLF001 — intentional readback
-        assert agent.ssh._user == "admin"  # noqa: SLF001 — intentional readback
+        # The underlying SSH transport is private — peek at it via
+        # the dunder attribute since this test specifically validates
+        # how the factory wires the credentials through.
+        assert isinstance(agent._ssh, PfSenseSSH)  # noqa: SLF001 — intentional readback
+        assert agent._ssh._host == "192.0.2.10"  # noqa: SLF001 — intentional readback
+        assert agent._ssh._user == "admin"  # noqa: SLF001 — intentional readback
 
     def test_from_credentials_passes_optional_args(self) -> None:
         agent = NetgateAgent.from_credentials(
@@ -75,8 +77,8 @@ class TestNetgateAgentFactory:
             ssh_port=2222,
             blocklist_table="custom_table",
         )
-        assert agent.ssh._port == 2222  # noqa: SLF001 — intentional readback
-        assert agent.ssh._table == "custom_table"  # noqa: SLF001 — intentional readback
+        assert agent._ssh._port == 2222  # noqa: SLF001 — intentional readback
+        assert agent._ssh._table == "custom_table"  # noqa: SLF001 — intentional readback
 
 
 # ---------------------------------------------------------------------------
@@ -240,14 +242,7 @@ class TestNetgateSpecificOperations:
 
 
 # ---------------------------------------------------------------------------
-# Escape hatch
+# (The ``ssh`` escape-hatch property used to live here in Phase 3b.2.
+# It was removed in Phase 3b.3.2 once every Netgate-specific call site
+# migrated to consume ``NetgateAgent`` methods directly.)
 # ---------------------------------------------------------------------------
-
-
-class TestSshEscapeHatch:
-    """The ``ssh`` property exposes the wrapped transport for legacy call sites."""
-
-    def test_ssh_property_returns_underlying_transport(self) -> None:
-        ssh = _ssh_mock()
-        agent = NetgateAgent(ssh)
-        assert agent.ssh is ssh

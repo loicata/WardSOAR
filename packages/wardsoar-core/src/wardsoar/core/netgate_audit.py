@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from wardsoar.core.config import AppConfig
-    from wardsoar.core.remote_agents.pfsense_ssh import PfSenseSSH
+    from wardsoar.core.remote_agents.netgate_agent import NetgateAgent
 
 logger = logging.getLogger("ward_soar.netgate_audit")
 
@@ -290,7 +290,7 @@ class NetgateAuditor:
 
     def __init__(
         self,
-        ssh: "PfSenseSSH",
+        ssh: "NetgateAgent",
         eve_json_path: str,
         blocklist_table_name: str = "blocklist",
     ) -> None:
@@ -1202,7 +1202,7 @@ class NetgateAuditor:
 
 
 async def run_audit(
-    ssh: "PfSenseSSH",
+    ssh: "NetgateAgent",
     config: "AppConfig",
 ) -> AuditResult:
     """One-shot helper that builds an auditor from the current config.

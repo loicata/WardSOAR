@@ -14,14 +14,13 @@ inheritance) and exposes two surfaces:
 
 Why composition over inheritance: the future ``VirusSniffAgent`` cannot
 sensibly inherit from ``PfSenseSSH`` (different OS, different transport
-specifics), and several call sites still pass a raw ``PfSenseSSH`` to
-free-function helpers — composition lets those keep working unchanged
-during Phase 3b.3's incremental migration.
+specifics).
 
-Phase 3b.2 deliberately keeps :class:`PfSenseSSH` and the free
-``apply_suricata_runmode`` / ``migrate_alias_to_urltable`` functions
-public and importable. This module is purely additive; nothing breaks
-if a call site keeps using the legacy entry points.
+The :class:`PfSenseSSH` transport stays public and importable for the
+agent's own internal use, but every call site outside ``remote_agents/``
+now consumes the agent (``NetgateAgent`` for Netgate-specific layers,
+``RemoteAgent`` protocol for pipeline core). The short-lived ``ssh``
+escape hatch from Phase 3b.2 was removed in Phase 3b.3.2.
 """
 
 from __future__ import annotations
@@ -74,18 +73,6 @@ class NetgateAgent:
                 blocklist_table=blocklist_table,
             )
         )
-
-    @property
-    def ssh(self) -> PfSenseSSH:
-        """Underlying SSH transport — escape hatch for legacy call sites.
-
-        Several existing modules (``netgate_audit``, ``netgate_tamper``,
-        ``netgate_apply``) still pass a raw :class:`PfSenseSSH` to
-        free-function helpers. Phase 3b.3 will migrate those helpers
-        to take a :class:`NetgateAgent` directly; until then this
-        property keeps the migration incremental.
-        """
-        return self._ssh
 
     # ------------------------------------------------------------------
     # RemoteAgent protocol surface (delegates to PfSenseSSH)
