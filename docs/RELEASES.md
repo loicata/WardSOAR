@@ -18,6 +18,38 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.9 — 2026-04-25
+
+Fail-safe guard logs (RFC1918 / whitelist / trusted_temp) downgraded
+to DEBUG when the verdict is BENIGN. WARNING was misleading on a
+verdict where no block was about to be issued — the v0.22.8 first-day
+production logs showed 1 spurious entry on a STUN traversal alert
+(192.168.2.100 → Cloudflare 3478/UDP) and 33 occurrences of
+benign + private-IP across the full historical log.
+
+- **File**: `WardSOAR_0.22.9.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `87ded4c81fee80b44399ee0b6545c15c89dd010e634e6f0fa67bb5c972623507`
+- **Tests**: 1277 green, 2 skipped (+8 from v0.22.8)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit — all pass
+
+### What's changed
+- Three guards in `responder.respond` (RFC1918 / whitelist /
+  trusted_temp) now log at DEBUG when `analysis.verdict == BENIGN`,
+  WARNING otherwise. The block decision itself (`BlockAction.NONE`
+  returned, no firewall write) is unchanged in all paths.
+- 8 new caplog tests cover the level matrix per gate × verdict.
+- New test fixture restores logger propagation that `setup_logging`
+  disables — surfaced as a flaky-suite bug during the regression
+  sweep, fixed in test scope only.
+
+### No breaking changes
+Operators upgrading from v0.22.8 see strictly less log noise and
+identical decision behaviour. Configuration files, MSI install path
+and uninstall procedure are unchanged.
+
+---
+
 ## v0.22.8 — 2026-04-24
 
 Monorepo refactor complete. No functional change over v0.22.7 — this
