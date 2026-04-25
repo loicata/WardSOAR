@@ -1,111 +1,100 @@
-"""Bridge between the WardSOAR engine and the Qt UI.
+"""Thin ``QThread`` lifecycle shell that owns the four UI controllers.
 
-Runs the EVE JSON watcher in a QThread and routes alerts through
-the full 13-step Pipeline (Filter → Dedup → Cache → PreScore →
-Collector → Forensics → VT → Analyzer → Confirmer → Responder →
-Logger → Cache Store).
+After refactor V3 (v0.22.12 → v0.22.16) every cohesive concern
+that used to live inside the 1067-SLOC ``EngineWorker`` god-class
+has been extracted into its own controller in
+``packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/``:
 
-Uses ``loop.run_forever()`` with ``create_task()`` so that alert
-processing, healthchecks and file polling all run concurrently
-without blocking the Qt main thread.
+* :class:`~wardsoar.pc.ui.controllers.HistoryController` (V3.2,
+  v0.22.12) — JSONL persistence + monthly archive lookup.
+* :class:`~wardsoar.pc.ui.controllers.ManualActionController` (V3.4,
+  v0.22.13) — operator-driven rollback + manual block requests.
+* :class:`~wardsoar.pc.ui.controllers.NetgateController` (V3.3,
+  v0.22.14) — appliance audit / baseline / tamper / apply / deploy
+  / reset-cleanup.
+* :class:`~wardsoar.pc.ui.controllers.PipelineController` (V3.5,
+  v0.22.16) — EVE ingestion + processing + healthcheck loop. Owns
+  the asyncio event loop.
+
+``EngineWorker`` is now a QThread shell that:
+
+1. Builds every controller and the pipeline-side helpers
+   (history, intel manager, healthchecker).
+2. Forwards each controller signal to a like-named worker signal
+   so existing ``connect()`` calls in ``app.py`` keep working
+   unchanged.
+3. Hands control to ``PipelineController.bootstrap_in_thread()``
+   from inside ``QThread.run()``.
+
+No business logic lives here anymore — every public method is a
+one-line delegate to the right controller.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
-import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from PySide6.QtCore import QThread, Signal
 
-from wardsoar.core.alert_enrichment import build_filtered_enriched, serialise_decision_record
 from wardsoar.core.intel.manager import IntelManager
-from wardsoar.core.ip_enrichment import build_ip_enrichment_async
 from wardsoar.pc.healthcheck import HealthChecker
-from wardsoar.pc.main import FilteredResult
-from wardsoar.core.models import DecisionRecord
-from wardsoar.core.watcher import EveJsonWatcher
 from wardsoar.pc.ui.controllers import (
     HistoryController,
     ManualActionController,
     NetgateController,
+    PipelineController,
 )
 
 if TYPE_CHECKING:
     from wardsoar.pc.main import Pipeline
 
-logger = logging.getLogger("ward_soar.ui.engine_bridge")
-
-
-async def _none_coroutine() -> None:
-    """Helper used by :func:`asyncio.gather` branches that resolve to
-    ``None`` without actually running any code.
-
-    Keeps the call-site readable when only one of the two IP
-    enrichments is needed (dest_ip missing or identical to src).
-    """
-    return None
-
 
 class EngineWorker(QThread):
-    """Background worker that routes alerts through the full Pipeline.
+    """QThread shell that owns the four UI controllers.
 
-    The worker owns an asyncio event loop driven by ``run_forever()``.
-    All I/O-bound work (pipeline, healthchecks) runs as async tasks so
-    they never block each other or starve the Qt event loop of GIL time.
+    The thread itself only exists so the controllers can run an
+    asyncio event loop off the Qt main thread — every other
+    concern lives in a controller. Signals are kept here for
+    backward compatibility with the (many) external ``connect()``
+    calls in ``app.py`` and the views; each one is connected
+    signal-to-signal to its source controller in :meth:`__init__`.
 
     Signals:
-        alert_received: Emitted with alert display data dict.
-        metrics_updated: Emitted with metrics dict.
-        activity_logged: Emitted with (time, event, details) tuple.
-        status_changed: Emitted with (status, mode) tuple.
-        health_updated: Emitted with (component, status) tuple.
+        alert_received (dict): forwarded from PipelineController.
+        metrics_updated (dict): forwarded from PipelineController.
+        activity_logged (str, str, str): forwarded from PipelineController.
+        status_changed (str, str): forwarded from PipelineController.
+        health_updated (str, str): forwarded from PipelineController.
+        ip_blocked (dict): forwarded from PipelineController.
+        rollback_completed (dict): forwarded from ManualActionController.
+        manual_block_completed (dict): forwarded from ManualActionController.
+        netgate_audit_completed (dict): forwarded from NetgateController.
+        netgate_baseline_established (dict): forwarded from NetgateController.
+        netgate_tamper_check_completed (dict): forwarded from NetgateController.
+        netgate_apply_completed (list): forwarded from NetgateController.
+        netgate_custom_rules_deployed (dict): forwarded from NetgateController.
+        netgate_reset_cleanup_completed (dict): forwarded from NetgateController.
     """
 
+    # Pipeline signals (V3.5).
     alert_received = Signal(dict)
     metrics_updated = Signal(dict)
     activity_logged = Signal(str, str, str)
     status_changed = Signal(str, str)
     health_updated = Signal(str, str)
-    # Rollback outcome: emitted after the user clicked "Unblock IP" and the
-    # pipeline has executed the full rollback (success or failure).
-    # Payload shape: {"ip", "success", "error", "signature_id", ...}.
+    ip_blocked = Signal(dict)
+
+    # Manual-action signals (V3.4).
     rollback_completed = Signal(dict)
-    # Netgate audit result (Phase 7a). Emitted once per Run Check click
-    # with a serialised :class:`~src.netgate_audit.AuditResult` dict so
-    # the UI can be consumed in-process without importing the dataclass.
+    manual_block_completed = Signal(dict)
+
+    # Netgate signals (V3.3).
     netgate_audit_completed = Signal(dict)
-    # Tamper-detection signals (Phase 7g).
-    # baseline_established payload: {captured_at, host, entries, error?}
-    # tamper_check_completed  payload: serialised
-    #     :class:`~src.netgate_tamper.TamperResult` dict.
     netgate_baseline_established = Signal(dict)
     netgate_tamper_check_completed = Signal(dict)
-    # Custom rules deploy (Phase 7c). Payload: {success, bytes_written,
-    # remote_path, rule_count, error?}.
     netgate_custom_rules_deployed = Signal(dict)
-    # Emitted when the Responder actually blocks an IP on pfSense (v0.6.4).
-    # Payload: {ip, signature, verdict, confidence, mode}. The tray
-    # manager listens to it to show a Windows toast — after the
-    # v0.6.3 incident where WardSOAR silently blocked its own
-    # machine, every block now triggers a visible notification.
-    ip_blocked = Signal(dict)
-    # Netgate Apply-selected (Phase 7b, v0.7.1). Payload is the list
-    # of serialised :class:`~src.netgate_apply.SafeApplyResult` dicts.
     netgate_apply_completed = Signal(list)
-    # Manual-review actionable block (v0.17.1). Emitted after the
-    # operator set CONFIRMED on an alert via the Manual Review
-    # dialog and the Responder processed the block request.
-    # Payload: ``{"ip", "success", "reason"}`` \u2014 ``success`` is
-    # True when pfSense actually got the block, False when a safety
-    # rail (whitelist / CDN allowlist / rate limit) refused it.
-    manual_block_completed = Signal(dict)
-    # Post-Netgate-reset cleanup (bootstrap track for a factory-reset
-    # box). Payload: {"baseline_removed", "block_entries_purged",
-    # "trusted_entries_purged", "errors", "message"}.
     netgate_reset_cleanup_completed = Signal(dict)
 
     def __init__(
@@ -119,57 +108,63 @@ class EngineWorker(QThread):
     ) -> None:
         super().__init__(parent)
         self._pipeline = pipeline
-        self._eve_path = eve_path
-        # ``mode`` is the watcher transport (file | ssh). ``ward_mode`` is
-        # the Responder policy (monitor | protect | hard_protect) — two
-        # different axes that happen to share the word "mode".
-        self._mode = mode
-        self._ward_mode = ward_mode
-        self._running = False
-        self._last_position = 0
-        self._alert_count = 0
-        self._filtered_count = 0
-        self._blocked_count = 0
-        self._processed_count = 0
 
-        # Async event loop — created in run(), used by create_task()
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-
-        # Alert history file for persistence across restarts.
-        # v0.22.12 — extraction step V3.2: the actual JSONL read/write
-        # logic now lives in :class:`HistoryController` so it can be
-        # tested without a QApplication. EngineWorker keeps the
-        # history-related public methods as thin delegates to preserve
-        # backward compatibility with ``app.py`` and the alerts view.
+        # Pipeline-side helpers — owned by the worker so they can
+        # be reused across controllers without duplicate
+        # construction. ``get_data_dir()`` is read-once at startup
+        # so the operator's APPDATA layout is consistent across
+        # restarts.
         from wardsoar.core.config import get_data_dir
 
         self._history_controller = HistoryController(
             get_data_dir() / "logs" / "alerts_history.jsonl"
         )
 
-        # v0.22.13 — extraction step V3.4: rollback + manual_block move
-        # to a dedicated controller. The controller is a QObject and
-        # owns its own signals; we forward them to the worker's signals
-        # below so existing callers (``app.py:504-506,583``) keep
-        # working unchanged. The loop is borrowed lazily through a
-        # provider callback because ``self._loop`` is created later
-        # in :meth:`run`.
+        intel_manager = IntelManager(cache_dir=get_data_dir() / "intel_feeds")
+
+        hc_cfg = healthcheck_cfg or {}
+        hc_cfg["eve_json_path"] = eve_path
+        healthchecker = HealthChecker(hc_cfg)
+        health_interval = int(hc_cfg.get("interval_seconds", 300))
+
+        # Pipeline controller — owns the event loop the other
+        # controllers borrow through their ``loop_provider``.
+        self._pipeline_controller = PipelineController(
+            pipeline=pipeline,
+            eve_path=eve_path,
+            mode=mode,
+            ward_mode=ward_mode,
+            history_controller=self._history_controller,
+            intel_manager=intel_manager,
+            healthchecker=healthchecker,
+            health_interval_s=health_interval,
+            parent=self,
+        )
+        self._pipeline_controller.alert_received.connect(self.alert_received)
+        self._pipeline_controller.metrics_updated.connect(self.metrics_updated)
+        self._pipeline_controller.activity_logged.connect(self.activity_logged)
+        self._pipeline_controller.status_changed.connect(self.status_changed)
+        self._pipeline_controller.health_updated.connect(self.health_updated)
+        self._pipeline_controller.ip_blocked.connect(self.ip_blocked)
+
+        # Loop provider for the sibling controllers — reads the
+        # pipeline controller's loop at every call so it always
+        # sees the current state (None before the worker starts,
+        # the live loop afterwards, None again after stop).
+        def loop_provider() -> Any:
+            return self._pipeline_controller.loop
+
         self._manual_action_controller = ManualActionController(
             pipeline=pipeline,
-            loop_provider=lambda: self._loop,
+            loop_provider=loop_provider,
             parent=self,
         )
         self._manual_action_controller.rollback_completed.connect(self.rollback_completed)
         self._manual_action_controller.manual_block_completed.connect(self.manual_block_completed)
 
-        # v0.22.14 — extraction step V3.3: Netgate operations move
-        # to a dedicated controller. Six signals to forward via
-        # signal-to-signal connections (same pattern as V3.4) plus
-        # two synchronous helpers (``applicable_fix_ids``,
-        # ``preview_custom_rules``) that the UI calls directly.
         self._netgate_controller = NetgateController(
             pipeline=pipeline,
-            loop_provider=lambda: self._loop,
+            loop_provider=loop_provider,
             parent=self,
         )
         self._netgate_controller.audit_completed.connect(self.netgate_audit_completed)
@@ -181,117 +176,24 @@ class EngineWorker(QThread):
             self.netgate_reset_cleanup_completed
         )
 
-        # v0.11.0 — central intelligence feeds manager. Built at
-        # construction so the registries can load their on-disk
-        # snapshots eagerly. The periodic refresh is started from
-        # :meth:`run` once the event loop is live.
-        self._intel_manager = IntelManager(cache_dir=get_data_dir() / "intel_feeds")
-
-        # Initialize healthchecker
-        hc_cfg = healthcheck_cfg or {}
-        hc_cfg["eve_json_path"] = eve_path
-        self._healthchecker = HealthChecker(hc_cfg)
-        self._health_interval: int = hc_cfg.get("interval_seconds", 300)
+    # ------------------------------------------------------------------
+    # QThread lifecycle — delegates to PipelineController
+    # ------------------------------------------------------------------
 
     def run(self) -> None:
-        """Thread entry — start the async event loop with run_forever()."""
-        self._running = True
-
-        # Ensure TMPDIR points to a writable directory for asyncssh key loading
-        import os
-        import tempfile
-
-        from wardsoar.core.config import get_data_dir
-
-        app_tmp = get_data_dir() / "tmp"
-        app_tmp.mkdir(parents=True, exist_ok=True)
-        os.environ["TMPDIR"] = str(app_tmp)
-        os.environ["TEMP"] = str(app_tmp)
-        os.environ["TMP"] = str(app_tmp)
-        tempfile.tempdir = str(app_tmp)
-
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
-
-        # Schedule the main monitoring coroutine
-        self._loop.create_task(self._main_loop())
-
-        # v0.11.0 — start the intelligence feeds background refresh.
-        # The manager triggers a first pass immediately and then
-        # walks the registries every 5 minutes, refreshing only
-        # those whose cache has exceeded their own interval.
-        self._loop.create_task(self._intel_manager.start_background_refresh())
-
-        # Level-2 process attribution buffer. The pipeline built the
-        # buffer and wired it into the ForensicAnalyzer; we just have
-        # to start its async task once the event loop is live.
-        buffer = getattr(self._pipeline, "_conn_buffer", None)
-        if buffer is not None:
-            self._loop.create_task(buffer.start())
-
-        # Longitudinal alerts-stats store (v0.22). Background flush
-        # task persists the in-memory queue to SQLite every 5 s.
-        alerts_stats = getattr(self._pipeline, "_alerts_stats", None)
-        if alerts_stats is not None:
-            self._loop.create_task(alerts_stats.start())
-            self._loop.create_task(self._alerts_stats_purge_loop(alerts_stats))
-
-        # run_forever() processes all tasks concurrently
-        try:
-            self._loop.run_forever()
-        finally:
-            # Signal the intel manager to stop before cancelling tasks.
-            self._intel_manager.stop()
-            # Cancel remaining tasks on shutdown
-            pending = asyncio.all_tasks(self._loop)
-            for task in pending:
-                task.cancel()
-            if pending:
-                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            self._loop.close()
+        """QThread entry — delegate to :meth:`PipelineController.bootstrap_in_thread`."""
+        self._pipeline_controller.bootstrap_in_thread()
 
     def stop(self) -> None:
         """Stop the worker — thread-safe, callable from the main thread."""
-        self._running = False
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        self._pipeline_controller.request_stop()
 
-    async def _alerts_stats_purge_loop(self, store: Any) -> None:
-        """Periodic purge of expired occurrences in the alerts stats DB.
-
-        Runs once right after startup (so a stale DB is cleaned on
-        relaunch) and then every 24 h. The purge is fully local,
-        cheap and idempotent; any error is swallowed so the purge
-        loop never takes the worker down.
-        """
-        import asyncio as _aio
-
-        # Initial purge on startup.
-        try:
-            store.purge_older_than()
-        except Exception:  # noqa: BLE001 — purge must not break the worker
-            logger.debug("alerts_stats: initial purge raised", exc_info=True)
-
-        while self._running:
-            try:
-                await _aio.sleep(24 * 3600)
-            except _aio.CancelledError:
-                break
-            try:
-                store.purge_older_than()
-            except Exception:  # noqa: BLE001 — periodic purge is best-effort
-                logger.debug("alerts_stats: periodic purge raised", exc_info=True)
+    def on_ssh_line(self, line: str) -> None:
+        """Process a line received from the SSH streamer (cross-thread safe)."""
+        self._pipeline_controller.on_ssh_line(line)
 
     # ------------------------------------------------------------------
-    # Netgate façade — delegates to :class:`NetgateController`.
-    #
-    # The controller (extracted in v0.22.14, V3.3) owns the actual
-    # SSH-backed audit / baseline / tamper / apply / deploy
-    # machinery and the two synchronous helpers the UI calls
-    # directly. EngineWorker keeps the public API so callers in
-    # ``app.py`` (see ``app.py:528-568``) do not have to change.
-    # The six signals are forwarded from the controller via Qt
-    # signal-to-signal connections set up in :meth:`__init__`.
+    # Netgate façade — delegates to :class:`NetgateController` (V3.3).
     # ------------------------------------------------------------------
 
     def request_netgate_audit(self) -> None:
@@ -327,14 +229,7 @@ class EngineWorker(QThread):
         return self._netgate_controller.preview_custom_rules()
 
     # ------------------------------------------------------------------
-    # Manual-action façade — delegates to :class:`ManualActionController`.
-    #
-    # The controller (extracted in v0.22.13, V3.4) owns the actual
-    # rollback / responder dispatch. EngineWorker keeps the same
-    # public API so callers in ``app.py`` do not have to change. The
-    # ``rollback_completed`` and ``manual_block_completed`` signals
-    # are forwarded from the controller to the worker via Qt
-    # signal-to-signal connections set up in :meth:`__init__`.
+    # Manual-action façade — delegates to :class:`ManualActionController` (V3.4).
     # ------------------------------------------------------------------
 
     def request_rollback(
@@ -360,12 +255,7 @@ class EngineWorker(QThread):
         )
 
     # ------------------------------------------------------------------
-    # History façade — delegates to :class:`HistoryController`.
-    #
-    # The controller (extracted in v0.22.12, V3.2) owns the actual
-    # JSONL read/write logic. EngineWorker re-exposes the same public
-    # API so existing callers in ``app.py`` and the alerts view do
-    # not have to change. All five methods below are 1-line passthroughs.
+    # History façade — delegates to :class:`HistoryController` (V3.2).
     # ------------------------------------------------------------------
 
     @property
@@ -400,407 +290,3 @@ class EngineWorker(QThread):
         return self._history_controller.load_history_from_archive(
             archive_path=archive_path, limit=limit
         )
-
-    def on_ssh_line(self, line: str) -> None:
-        """Process a line received from the SSH streamer (cross-thread safe)."""
-        if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._process_line, line)
-
-    # ----------------------------------------------------------------
-    # Main async loop
-    # ----------------------------------------------------------------
-
-    async def _main_loop(self) -> None:
-        """Main monitoring coroutine — file polling + periodic healthchecks."""
-        mode_label = {
-            "monitor": "Monitor",
-            "protect": "Protect",
-            "hard_protect": "Hard Protect",
-        }.get(self._ward_mode, "Monitor")
-        mode_info = f"Pipeline: 13-step — Mode: {mode_label}"
-
-        # Initial healthcheck
-        await self._run_healthchecks_async()
-
-        if self._mode == "ssh":
-            self.status_changed.emit("Operational", mode_label)
-            self.activity_logged.emit(
-                datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                "System",
-                f"Engine started (SSH mode) — {mode_info}",
-            )
-            # SSH mode: just run periodic healthchecks
-            while self._running:
-                await asyncio.sleep(1)
-                await self._maybe_run_healthchecks_async()
-            return
-
-        # File mode: poll local EVE JSON file
-        eve_file = Path(self._eve_path)
-
-        if not eve_file.exists():
-            logger.warning("EVE JSON file not found: %s", self._eve_path)
-            self.activity_logged.emit(
-                datetime.now(timezone.utc).strftime("%H:%M:%S"),
-                "Warning",
-                f"EVE file not found: {self._eve_path}",
-            )
-            return
-
-        self._last_position = eve_file.stat().st_size
-        self.status_changed.emit("Operational", mode_label)
-        self.activity_logged.emit(
-            datetime.now(timezone.utc).strftime("%H:%M:%S"),
-            "System",
-            f"Watcher started (file mode) — {mode_info}",
-        )
-
-        while self._running:
-            self._process_new_lines(eve_file)
-            await self._maybe_run_healthchecks_async()
-            await asyncio.sleep(2)
-
-    # ----------------------------------------------------------------
-    # Healthchecks (async)
-    # ----------------------------------------------------------------
-
-    async def _maybe_run_healthchecks_async(self) -> None:
-        """Run healthchecks if enough time has passed since last run."""
-        loop = asyncio.get_running_loop()
-        now = loop.time()
-        if not hasattr(self, "_last_health_time"):
-            self._last_health_time: float = 0.0
-        if now - self._last_health_time >= self._health_interval:
-            await self._run_healthchecks_async()
-
-    async def _run_healthchecks_async(self) -> None:
-        """Run all healthchecks concurrently and emit results."""
-        loop = asyncio.get_running_loop()
-        self._last_health_time = loop.time()
-        try:
-            results = await self._healthchecker.run_all_checks()
-            for result in results:
-                self.health_updated.emit(result.component, result.status.value)
-
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            overall = self._healthchecker.get_overall_status().value
-            # v0.8.6 B2: only surface in the Activity tab when
-            # something is off. A healthy check every 5 minutes is
-            # noise — if the operator wants to know the last check
-            # ran, the Dashboard "Health" widget already shows it.
-            # Degraded / failed statuses still raise an Activity
-            # entry so any sanity regression is visible.
-            if overall.lower() != "healthy":
-                self.activity_logged.emit(ts, "Health", f"Check complete — {overall}")
-        except Exception as exc:
-            logger.warning("Healthcheck failed: %s", exc)
-
-    # ----------------------------------------------------------------
-    # Alert processing
-    # ----------------------------------------------------------------
-
-    def _process_new_lines(self, eve_file: Path) -> None:
-        """Read and process new lines from the EVE JSON file."""
-        try:
-            current_size = eve_file.stat().st_size
-            if current_size <= self._last_position:
-                return
-
-            with open(eve_file, "r", encoding="utf-8") as f:
-                f.seek(self._last_position)
-                new_data = f.read()
-                self._last_position = f.tell()
-        except OSError:
-            return
-
-        for line in new_data.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            self._process_line(stripped)
-
-    def _process_line(self, line: str) -> None:
-        """Parse a single EVE JSON line and schedule pipeline processing."""
-        try:
-            raw_event: dict[str, Any] = json.loads(line)
-        except json.JSONDecodeError:
-            return
-
-        event_type = raw_event.get("event_type", "")
-
-        # Log network event types as activity.
-        #
-        # v0.8.6 — ``alert`` is deliberately excluded here. The
-        # previous behaviour emitted a generic "IDS Alert: src -> dest"
-        # row *before* the pipeline decided what to do with the
-        # alert, and then a second row (FILTERED / PIPELINE) a few
-        # milliseconds later once the verdict was in. With multiple
-        # alerts arriving in the same second, the initial row carried
-        # only ``src -> dest`` — no SID, no signature — so the
-        # operator could not tell which subsequent FILTERED /
-        # PIPELINE line matched which IDS Alert. We now emit a single
-        # row per alert, from the pipeline completion path, with
-        # both endpoints AND the signature in one place. See the
-        # FILTERED / PIPELINE emissions below for the new format.
-        if event_type in ("dns", "tls", "ssh", "http"):
-            src = raw_event.get("src_ip", "?")
-            dest = raw_event.get("dest_ip", "?")
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            self.activity_logged.emit(ts, event_type.upper(), f"{src} -> {dest}")
-
-        # Only process alert events
-        if event_type != "alert":
-            return
-
-        alert = EveJsonWatcher.parse_eve_alert(raw_event)
-        if alert is None:
-            alert_sub = raw_event.get("alert")
-            sub_keys = list(alert_sub.keys()) if isinstance(alert_sub, dict) else "missing"
-            logger.warning(
-                "parse_eve_alert returned None — keys: %s, alert: %s",
-                list(raw_event.keys()),
-                sub_keys,
-            )
-            return
-
-        self._alert_count += 1
-        logger.info(
-            "Alert parsed: %s -> %s sig=%s", alert.src_ip, alert.dest_ip, alert.alert_signature_id
-        )
-
-        # Schedule as an async task — non-blocking!
-        if self._loop is None:
-            raise RuntimeError("Event loop not initialized — call start() first")
-        self._loop.create_task(self._process_alert_async(alert))
-
-    async def _build_ip_enrichment_for(self, ip: str) -> Any:
-        """Wrap :func:`src.ip_enrichment.build_ip_enrichment_async` with the
-        pipeline's existing registries.
-
-        All dependencies are pulled out of the ``Pipeline`` instance
-        we already hold a reference to. v0.12.0: the enrichment is
-        now async because HTTP reputation clients (VirusTotal,
-        AbuseIPDB, GreyNoise, OTX) need an asyncio context. Failures
-        are caught so the Alert Detail enrichment never crashes the
-        hot path \u2014 we return ``None`` and the UI renders a minimal
-        Identity block from the raw alert fields.
-        """
-        pipeline = self._pipeline
-
-        # Build a thin ``lookup`` adapter over the ASN enricher's
-        # SQLite cache. The enricher exposes an async ``lookup`` that
-        # triggers an HTTP call on miss — we want cache-only here so
-        # the enrichment stays synchronous and cheap.
-        asn_cache_lookup: Any = None
-        try:
-            enr = getattr(pipeline, "_asn_enricher", None)
-            if enr is not None and hasattr(enr, "_cache_lookup"):
-                asn_cache_lookup = enr._cache_lookup  # noqa: SLF001
-            elif enr is not None and hasattr(enr, "_cache"):
-                asn_cache_lookup = enr._cache.get  # noqa: SLF001
-        except Exception:  # noqa: BLE001
-            asn_cache_lookup = None
-
-        try:
-            return await build_ip_enrichment_async(
-                ip,
-                asn_cache_lookup=asn_cache_lookup,
-                cdn_allowlist=getattr(pipeline, "_cdn_allowlist", None),
-                suspect_asn_registry=getattr(pipeline, "_suspect_asns", None),
-                bad_actor_registry=getattr(pipeline, "_known_bad_actors", None),
-                tor_exit_registry=getattr(pipeline, "_tor_exit_fetcher", None),
-                # v0.11.0 — feed the IntelManager built during the
-                # worker's construction. Its registries are already
-                # populated from their on-disk snapshots, so even a
-                # newly-received alert benefits from the last known
-                # good data before the first background refresh runs.
-                intel_manager=self._intel_manager,
-                history_path=self._history_controller.history_path,
-                do_rdns=True,
-            )
-        except Exception:  # noqa: BLE001 — the enrichment is best-effort
-            logger.debug(
-                "IP enrichment for %s failed, falling back to minimal detail",
-                ip,
-                exc_info=True,
-            )
-            return None
-
-    async def _process_alert_async(self, alert: Any) -> None:
-        """Process a single alert through the pipeline (async task)."""
-        logger.info("Pipeline starting for %s -> %s", alert.src_ip, alert.dest_ip)
-        try:
-            result = await self._pipeline.process_alert(alert)
-            logger.info(
-                "Pipeline completed for %s — result type: %s", alert.src_ip, type(result).__name__
-            )
-        except PermissionError as exc:
-            logger.warning("Pipeline permission error for %s: %s", alert.src_ip, exc)
-            return
-        except Exception as exc:
-            logger.error("Pipeline error for %s: %s", alert.src_ip, exc, exc_info=True)
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            self.activity_logged.emit(ts, "ERROR", f"Pipeline failed: {exc}")
-            return
-
-        if isinstance(result, FilteredResult):
-            self._filtered_count += 1
-
-            # v0.12.0 \u2014 enrichment is now async (HTTP reputation
-            # clients). v0.15.0 \u2014 enrich BOTH src and dest so the
-            # Alert Detail view can surface "who's on both ends of
-            # the flow". Run both in parallel to keep wall time low.
-            (
-                filtered_ip_enrichment,
-                filtered_dest_ip_enrichment,
-            ) = await asyncio.gather(
-                self._build_ip_enrichment_for(alert.src_ip),
-                (
-                    self._build_ip_enrichment_for(alert.dest_ip)
-                    if alert.dest_ip
-                    else _none_coroutine()
-                ),
-            )
-
-            # Emit filtered alert to Alerts view
-            filtered_data = {
-                "time": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                "src_ip": alert.src_ip,
-                "signature": alert.alert_signature,
-                "verdict": "filtered",
-                "score": "—",
-                "severity": str(alert.alert_severity.value),
-                "src_port": str(alert.src_port),
-                "dest_ip": alert.dest_ip,
-                "dest_port": str(alert.dest_port),
-                "proto": alert.proto,
-                "category": alert.alert_category,
-                "signature_id": str(alert.alert_signature_id),
-                "confidence": "—",
-                "reasoning": result.reason,
-                "actions": [],
-                "pipeline_ms": "0",
-                # v0.9.0 — the full enriched payload the detail
-                # view reads. For filtered alerts this is minimal
-                # (no DecisionRecord, no enrichment) but it still
-                # ships the raw Suricata fields + filter reason +
-                # inferred pipeline trace so the detail screen
-                # can render N/A sections cleanly.
-                "_full": build_filtered_enriched(
-                    alert,
-                    result.reason,
-                    # v0.9.5 — surface the YAML entry (signature_name,
-                    # operator reason, added/review dates) to the detail
-                    # view so its Filter specific-details paragraph can
-                    # quote the operator verbatim. SID-match only for
-                    # now; category / pair metadata are not yet surfaced.
-                    filter_meta=self._pipeline._filter.get_sid_metadata(alert.alert_signature_id),
-                    # v0.10.0 — IP ownership & reputation snapshot.
-                    # Best-effort: if the enrichment fails, the UI
-                    # still renders a minimal Identity block.
-                    ip_enrichment=filtered_ip_enrichment,
-                    dest_ip_enrichment=filtered_dest_ip_enrichment,
-                ),
-            }
-            self.alert_received.emit(filtered_data)
-            self._history_controller.persist_alert(filtered_data)
-            # v0.8.6 B2: per-alert activity rows removed from the
-            # System Activity tab — the alert is already fully
-            # visible in the Alerts tab (with a detail panel).
-            # Activity is now a pure system-event journal.
-            return
-
-        if not isinstance(result, DecisionRecord):
-            raise TypeError(f"Expected DecisionRecord, got {type(result).__name__}")
-        record = result
-        self._processed_count += 1
-
-        # Extract verdict info
-        verdict = "inconclusive"
-        confidence = "—"
-        reasoning = ""
-        if record.analysis:
-            verdict = record.analysis.verdict.value
-            confidence = f"{record.analysis.confidence:.0%}"
-            reasoning = record.analysis.reasoning
-
-        if record.actions_taken:
-            self._blocked_count += 1
-
-        # v0.12.0 \u2014 enrichment is now async. v0.15.0 \u2014 enrich BOTH
-        # src and dest. Run in parallel to keep wall time bounded by
-        # the slowest response.
-        (
-            analyzed_ip_enrichment,
-            analyzed_dest_ip_enrichment,
-        ) = await asyncio.gather(
-            self._build_ip_enrichment_for(record.alert.src_ip),
-            (
-                self._build_ip_enrichment_for(record.alert.dest_ip)
-                if record.alert.dest_ip
-                else _none_coroutine()
-            ),
-        )
-
-        # Emit alert for UI
-        alert_data = {
-            "time": record.alert.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            "src_ip": record.alert.src_ip,
-            "signature": record.alert.alert_signature,
-            "verdict": verdict,
-            "score": str(record.alert.alert_severity.value * 20),
-            "severity": str(record.alert.alert_severity.value),
-            "src_port": str(record.alert.src_port),
-            "dest_ip": record.alert.dest_ip,
-            "dest_port": str(record.alert.dest_port),
-            "proto": record.alert.proto,
-            "category": record.alert.alert_category,
-            "signature_id": str(record.alert.alert_signature_id),
-            "confidence": confidence,
-            "reasoning": reasoning,
-            "actions": [a.action_type.value for a in record.actions_taken],
-            "pipeline_ms": str(record.pipeline_duration_ms),
-            # v0.9.0 — full DecisionRecord serialised for the detail
-            # view. The alerts-list render path ignores this key
-            # (backward compat), and ``load_alert_history`` just
-            # passes it through.
-            "_full": serialise_decision_record(
-                record,
-                ip_enrichment=analyzed_ip_enrichment,
-                dest_ip_enrichment=analyzed_dest_ip_enrichment,
-            ),
-        }
-        self.alert_received.emit(alert_data)
-        self._history_controller.persist_alert(alert_data)
-
-        # v0.6.4 — surface every successful IP block as a distinct
-        # signal so the tray manager can pop a toast. Without this the
-        # operator had no way to learn WardSOAR had just taken their
-        # own machine offline.
-        for action in record.actions_taken:
-            if action.action_type.value == "ip_block" and action.success and action.target_ip:
-                self.ip_blocked.emit(
-                    {
-                        "ip": action.target_ip,
-                        "signature": record.alert.alert_signature,
-                        "verdict": verdict,
-                        "confidence": confidence,
-                    }
-                )
-                break
-
-        # Update metrics
-        self.metrics_updated.emit(
-            {
-                "alerts_today": self._alert_count,
-                "blocked_today": self._blocked_count,
-                "fp_rate": (
-                    self._filtered_count / self._alert_count if self._alert_count > 0 else 0.0
-                ),
-                "queue_depth": 0,
-            }
-        )
-
-        # v0.8.6 B2: the per-alert PIPELINE row used to emit here is
-        # gone. The Alerts tab carries the full record (with detail
-        # panel for drill-down). Activity stays system-level only.

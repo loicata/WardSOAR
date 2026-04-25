@@ -1173,8 +1173,10 @@ class WardApp:
             if hasattr(self, "_engine") and hasattr(self._engine, "_pipeline"):
                 self._engine._pipeline._responder.set_mode(resolved)
                 # Keep the engine worker's own label in sync (used by
-                # status banner + activity log).
-                self._engine._ward_mode = resolved.value
+                # status banner + activity log). v0.22.16: the field
+                # moved from EngineWorker into PipelineController as
+                # part of the V3.5 extraction.
+                self._engine._pipeline_controller._ward_mode = resolved.value
 
             logger.info("Mode changed to %s", resolved.value)
         except (OSError, yaml.YAMLError) as exc:

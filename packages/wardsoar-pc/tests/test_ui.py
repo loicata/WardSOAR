@@ -272,9 +272,12 @@ class TestActivityViewEventShape:
         )
         emitted: list[tuple[str, str, str]] = []
         worker.activity_logged.connect(lambda t, e, d: emitted.append((t, e, d)))
-        # Fake event loop so the async schedule call doesn't crash.
-        worker._loop = MagicMock()
-        worker._loop.create_task = MagicMock()
+        # Fake event loop on the PipelineController (V3.5: the loop
+        # moved off EngineWorker into the controller). The mock makes
+        # ``loop.is_running()`` truthy so ``on_ssh_line`` schedules
+        # the call instead of silently dropping it.
+        worker._pipeline_controller._loop = MagicMock()
+        worker._pipeline_controller._loop.create_task = MagicMock()
 
         alert_line = (
             '{"event_type": "alert", "src_ip": "1.2.3.4", '
@@ -311,20 +314,25 @@ class TestActivityViewEventShape:
         worker.activity_logged.connect(lambda t, e, d: emitted.append((t, e, d)))
 
         # Fake the healthchecker to return a healthy overall.
+        # V3.5: the healthcheck loop moved off EngineWorker into
+        # PipelineController, so we patch the controller's
+        # ``_healthchecker`` and call its ``_run_healthchecks_async``
+        # directly.
         fake_status_healthy = MagicMock()
         fake_status_healthy.value = "healthy"
         fake_result = MagicMock()
         fake_result.component = "test"
         fake_result.status.value = "healthy"
-        worker._healthchecker = MagicMock()
+        controller = worker._pipeline_controller
+        controller._healthchecker = MagicMock()
 
         async def _run_all() -> list[object]:
             return [fake_result]
 
-        worker._healthchecker.run_all_checks = _run_all
-        worker._healthchecker.get_overall_status = MagicMock(return_value=fake_status_healthy)
+        controller._healthchecker.run_all_checks = _run_all
+        controller._healthchecker.get_overall_status = MagicMock(return_value=fake_status_healthy)
 
-        asyncio.run(worker._run_healthchecks_async())
+        asyncio.run(controller._run_healthchecks_async())
         health_rows = [e for e in emitted if e[1].lower() == "health"]
         assert health_rows == [], f"healthy check leaked an Activity row: {health_rows}"
 
@@ -332,8 +340,8 @@ class TestActivityViewEventShape:
         emitted.clear()
         fake_status_degraded = MagicMock()
         fake_status_degraded.value = "degraded"
-        worker._healthchecker.get_overall_status = MagicMock(return_value=fake_status_degraded)
-        asyncio.run(worker._run_healthchecks_async())
+        controller._healthchecker.get_overall_status = MagicMock(return_value=fake_status_degraded)
+        asyncio.run(controller._run_healthchecks_async())
         health_rows = [e for e in emitted if e[1].lower() == "health"]
         assert len(health_rows) == 1, f"degraded check should emit one row, got: {health_rows}"
         assert "degraded" in health_rows[0][2]
