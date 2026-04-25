@@ -82,6 +82,8 @@ same when invoked without a `sources` argument.
   installer / blocker code is not in this release.
 
 - **File**: `WardSOAR_0.22.20.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `ae8236b36a462a4a38df46f7c57124605e97fa7f20f7adb7d9b9e68dfaded722`
 - **Tests**: 1453 green, 2 skipped (+20 for the new questionnaire
   module)
 - **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
