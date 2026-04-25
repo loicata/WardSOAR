@@ -5,6 +5,8 @@ Key safety tests: whitelist enforcement, rate limiting, dry-run mode,
 fail-safe on errors.
 """
 
+import logging
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -15,6 +17,25 @@ from wardsoar.core.config import WhitelistConfig
 from wardsoar.core.models import BlockAction, ResponseAction, ThreatAnalysis, ThreatVerdict
 from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
 from wardsoar.core.responder import RateLimiter, ThreatResponder
+from wardsoar.core.trusted_temp import TrustedTempRegistry
+
+
+@pytest.fixture(autouse=True)
+def _ensure_responder_logger_propagation() -> Iterator[None]:
+    """Force the ``ward_soar`` logger to propagate so caplog captures records.
+
+    ``setup_logging`` sets ``propagate = False`` on the parent logger
+    (logger.py:55) to avoid duplicate output. When test_logger.py runs
+    before this module in the full suite, the flag persists and breaks
+    caplog capture for ``ward_soar.responder``. We restore propagation
+    for the duration of each test.
+    """
+    parent = logging.getLogger("ward_soar")
+    saved = parent.propagate
+    parent.propagate = True
+    yield
+    parent.propagate = saved
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -204,6 +225,170 @@ class TestRespond:
         action_types = [a.action_type for a in actions]
         assert BlockAction.IP_BLOCK in action_types
         assert BlockAction.PROCESS_KILL in action_types
+
+    @pytest.mark.asyncio
+    async def test_rfc1918_guard_refuses_private_ip(self, tmp_path: Path) -> None:
+        """RFC1918 guard refuses to block a private IP regardless of verdict.
+
+        Defense in depth: blocking 192.168.x.x would silence the
+        operator's own LAN. Guard is unconditional, runs before
+        whitelist and rate-limiter.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.CONFIRMED, 0.99)
+
+        actions = await responder.respond(analysis, "192.168.2.100")
+
+        assert all(a.action_type == BlockAction.NONE for a in actions)
+        assert any("RFC1918" in (a.error_message or "") for a in actions)
+
+    @pytest.mark.asyncio
+    async def test_rfc1918_guard_logs_debug_on_benign(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On BENIGN verdict, the RFC1918 guard logs at DEBUG, not WARNING.
+
+        No block was about to be issued, so a WARNING level is
+        misleading and pollutes operator dashboards. Observed in
+        production v0.22.8 logs (STUN traffic generated 33 false
+        warnings over 5 days).
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.BENIGN, 0.95)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            await responder.respond(analysis, "192.168.2.100")
+
+        rfc_records = [r for r in caplog.records if "RFC1918 GUARD" in r.getMessage()]
+        assert len(rfc_records) == 1
+        assert rfc_records[0].levelno == logging.DEBUG
+
+    @pytest.mark.asyncio
+    async def test_rfc1918_guard_logs_warning_on_confirmed(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On CONFIRMED verdict, the RFC1918 guard logs at WARNING.
+
+        A block was wanted — the guard genuinely saved the operator
+        from blocking their own LAN. Operator should see this in
+        dashboards as a near-miss event.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.CONFIRMED, 0.99)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            await responder.respond(analysis, "192.168.2.100")
+
+        rfc_records = [r for r in caplog.records if "RFC1918 GUARD" in r.getMessage()]
+        assert len(rfc_records) == 1
+        assert rfc_records[0].levelno == logging.WARNING
+
+    @pytest.mark.asyncio
+    async def test_rfc1918_guard_logs_warning_on_inconclusive(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On INCONCLUSIVE verdict, the RFC1918 guard logs at WARNING.
+
+        INCONCLUSIVE in HARD_PROTECT mode would block — same near-miss
+        semantics as CONFIRMED. Only BENIGN is downgraded to DEBUG.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.INCONCLUSIVE, 0.0)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            await responder.respond(analysis, "192.168.2.100")
+
+        rfc_records = [r for r in caplog.records if "RFC1918 GUARD" in r.getMessage()]
+        assert len(rfc_records) == 1
+        assert rfc_records[0].levelno == logging.WARNING
+
+    @pytest.mark.asyncio
+    async def test_whitelist_logs_debug_on_benign(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On BENIGN verdict, the whitelist gate logs at DEBUG, not WARNING.
+
+        No block was about to be issued. Same rationale as the
+        RFC1918 guard.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.BENIGN, 0.5)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            # 192.168.1.1 is in the default test whitelist; RFC1918 fires
+            # first, so use a non-private whitelisted IP for this test.
+            responder._whitelist = WhitelistConfig(ips={"185.199.108.153"})
+            await responder.respond(analysis, "185.199.108.153")
+
+        records = [r for r in caplog.records if "WHITELIST BLOCK" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+
+    @pytest.mark.asyncio
+    async def test_whitelist_logs_warning_on_confirmed(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On CONFIRMED verdict, the whitelist gate logs at WARNING.
+
+        A block was wanted — the whitelist genuinely prevented it.
+        Operator should see this as a near-miss event in dashboards.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        analysis = _make_analysis(ThreatVerdict.CONFIRMED, 0.95)
+        responder._whitelist = WhitelistConfig(ips={"185.199.108.153"})
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            await responder.respond(analysis, "185.199.108.153")
+
+        records = [r for r in caplog.records if "WHITELIST BLOCK" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
+
+    @pytest.mark.asyncio
+    async def test_trusted_temp_logs_debug_on_benign(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On BENIGN verdict, the trusted_temp gate logs at DEBUG.
+
+        Same rationale: no block was wanted, no real flapping risk to
+        flag. WARNING was misleading for the operator.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        trusted = MagicMock(spec=TrustedTempRegistry)
+        trusted.is_trusted.return_value = True
+        responder._trusted_temp = trusted
+        analysis = _make_analysis(ThreatVerdict.BENIGN, 0.5)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            # Public IP that is neither RFC1918 nor whitelisted, only trusted_temp
+            await responder.respond(analysis, "203.0.113.5")
+
+        records = [r for r in caplog.records if "TRUSTED_TEMP" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+
+    @pytest.mark.asyncio
+    async def test_trusted_temp_logs_warning_on_confirmed(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """On CONFIRMED verdict, the trusted_temp gate logs at WARNING.
+
+        The operator just rolled back this IP and now WardSOAR wants
+        to re-block on a confirmed threat — that is a real flapping
+        signal worth surfacing.
+        """
+        responder = _make_responder(dry_run=False, tmp_path=tmp_path)
+        trusted = MagicMock(spec=TrustedTempRegistry)
+        trusted.is_trusted.return_value = True
+        responder._trusted_temp = trusted
+        analysis = _make_analysis(ThreatVerdict.CONFIRMED, 0.95)
+
+        with caplog.at_level(logging.DEBUG, logger="ward_soar.responder"):
+            await responder.respond(analysis, "203.0.113.5")
+
+        records = [r for r in caplog.records if "TRUSTED_TEMP" in r.getMessage()]
+        assert len(records) == 1
+        assert records[0].levelno == logging.WARNING
 
 
 # ---------------------------------------------------------------------------

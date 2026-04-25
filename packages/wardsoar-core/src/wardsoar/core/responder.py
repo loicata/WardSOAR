@@ -271,7 +271,17 @@ class ThreatResponder:
         # v0.6.4 after WardSOAR blocked 192.168.2.100 in Hard Protect
         # on a BENIGN 0.92 verdict for its own ipinfo.io lookup.
         if _is_rfc1918_or_local(source_ip):
-            logger.warning(
+            # Downgrade to DEBUG when the verdict is BENIGN: the guard
+            # intervened but no block was about to be issued anyway,
+            # so a WARNING misleads operators into thinking a risky
+            # action was averted. Keep WARNING for verdicts where a
+            # block was actually wanted (CONFIRMED, INCONCLUSIVE in
+            # HARD_PROTECT) — those are the cases the guard truly saved.
+            log_level = (
+                logging.DEBUG if analysis.verdict == ThreatVerdict.BENIGN else logging.WARNING
+            )
+            logger.log(
+                log_level,
                 "RFC1918 GUARD: %s is private/loopback/link-local — refusing to block "
                 "(unconditional safety, independent of whitelist/mode)",
                 source_ip,
@@ -286,7 +296,19 @@ class ThreatResponder:
             return actions
 
         if self._whitelist.is_whitelisted(source_ip):
-            logger.warning("WHITELIST BLOCK: %s is whitelisted — refusing to block", source_ip)
+            # Same DEBUG/WARNING split as the RFC1918 guard above:
+            # on BENIGN no block was about to occur, so a WARNING is
+            # noise. CONFIRMED / INCONCLUSIVE in HARD_PROTECT means a
+            # block was wanted and the whitelist genuinely saved the
+            # operator — keep WARNING there.
+            log_level = (
+                logging.DEBUG if analysis.verdict == ThreatVerdict.BENIGN else logging.WARNING
+            )
+            logger.log(
+                log_level,
+                "WHITELIST BLOCK: %s is whitelisted — refusing to block",
+                source_ip,
+            )
             actions.append(
                 ResponseAction(
                     action_type=BlockAction.NONE,
@@ -297,7 +319,17 @@ class ThreatResponder:
             return actions
 
         if self._trusted_temp is not None and self._trusted_temp.is_trusted(source_ip):
-            logger.warning(
+            # Same DEBUG/WARNING split. The trusted-temp registry exists
+            # to prevent re-blocking an IP the user just rolled back; a
+            # BENIGN verdict was never going to re-block anyway, so a
+            # WARNING about "refusing to re-block" is misleading. Keep
+            # WARNING for CONFIRMED / INCONCLUSIVE — those are the
+            # actual flapping signals the operator should notice.
+            log_level = (
+                logging.DEBUG if analysis.verdict == ThreatVerdict.BENIGN else logging.WARNING
+            )
+            logger.log(
+                log_level,
                 "TRUSTED_TEMP: %s was recently rolled back by user — refusing to re-block",
                 source_ip,
             )
