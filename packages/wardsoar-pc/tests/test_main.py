@@ -4,6 +4,7 @@ main.py is STANDARD (80% coverage). Tests verify the pipeline
 wiring and processing flow with mocked components.
 """
 
+import logging
 import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -73,6 +74,43 @@ class TestPipelineInit:
         assert pipeline._filter is not None
         assert pipeline._deduplicator is not None
         assert pipeline._prescorer is not None
+
+
+# ---------------------------------------------------------------------------
+# Startup banner tests
+# ---------------------------------------------------------------------------
+
+
+class TestStartupBanner:
+    """Regression for the v0.22.16 audit: ``main.py`` hardcoded
+    ``"WardSOAR v0.5 (Phase 5+6 online)"`` in the startup banner
+    instead of using the real ``wardsoar.pc.__version__``. The banner
+    had been stale across 9+ public releases (since v0.22.7).
+    """
+
+    def test_banner_uses_real_pc_version(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Pipeline init logs the actual pc-package version, not 'v0.5'."""
+        from wardsoar.pc import __version__ as pc_version
+
+        # The ``ward_soar`` logger has propagation disabled by
+        # ``setup_logger``; flip it on for the duration of the assertion
+        # so caplog can see the records emitted under that root.
+        ward_logger = logging.getLogger("ward_soar")
+        previous_propagate = ward_logger.propagate
+        ward_logger.propagate = True
+        try:
+            with caplog.at_level(logging.INFO, logger="ward_soar.main"):
+                _make_pipeline()
+        finally:
+            ward_logger.propagate = previous_propagate
+
+        banner_lines = [
+            r.getMessage() for r in caplog.records if "Pipeline initialised" in r.getMessage()
+        ]
+        assert banner_lines, "expected at least one 'Pipeline initialised' log entry"
+        assert all(pc_version in line for line in banner_lines), banner_lines
+        assert all("v0.5" not in line for line in banner_lines), banner_lines
+        assert all("Phase 5+6" not in line for line in banner_lines), banner_lines
 
 
 # ---------------------------------------------------------------------------

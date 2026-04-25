@@ -17,6 +17,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 
+from wardsoar.pc import __version__
 from wardsoar.core.alert_queue import AlertQueue
 from wardsoar.core.analyzer import ThreatAnalyzer
 from wardsoar.core.asn_enricher import AsnEnricher
@@ -309,7 +310,7 @@ class Pipeline:
         # Visible startup banner so overnight logs make it obvious that
         # the pipeline was (re)constructed and which features are armed.
         logger.info("=" * 60)
-        logger.info("Pipeline initialised — WardSOAR v0.5 (Phase 5+6 online)")
+        logger.info("Pipeline initialised — WardSOAR v%s", __version__)
         logger.info("  prescorer mode:         %s", config.prescorer.get("mode", "learning"))
         logger.info(
             "  prescorer threshold:    %s",
