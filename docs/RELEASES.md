@@ -18,6 +18,41 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.10 — 2026-04-25
+
+Fix the About dialog that displayed ``v0.0.1`` on a v0.22.9 install.
+The dialog was importing ``__version__`` from ``wardsoar.core`` (a
+skeleton placeholder) instead of ``wardsoar.pc`` (the source of truth
+read by ``pyproject.toml`` and WiX). The placeholder is now removed
+from ``wardsoar.core/__init__.py`` so the same accident cannot recur.
+
+- **File**: `WardSOAR_0.22.10.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `5855b1447ffc14868fec89ca20ef658b94a091e5a8a5fd237493297ce6dd404e`
+- **Tests**: 1279 green, 2 skipped (+2 from v0.22.9)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit — all pass
+
+### What's changed
+- `about_dialog.py:22` — import switched from
+  `from wardsoar.core import __version__` to
+  `from wardsoar.pc import __version__`.
+- `wardsoar.core/__init__.py` — placeholder `__version__ = "0.0.1"`
+  removed; the docstring now warns future contributors not to
+  reintroduce one. The shipped product version lives on
+  `wardsoar.pc` only.
+- 2 new tests in `test_ui.py::TestAboutDialog`:
+  - dialog imports the pc-package version
+  - constructed dialog displays it (regression coverage)
+- 2 skeleton tests updated to match the new contract
+  (``core`` no longer has ``__version__``).
+
+### No breaking changes
+The fix only affects the About dialog text; pipeline, decisions,
+configuration files, MSI install path and uninstall procedure are
+unchanged.
+
+---
+
 ## v0.22.9 — 2026-04-25
 
 Fail-safe guard logs (RFC1918 / whitelist / trusted_temp) downgraded
