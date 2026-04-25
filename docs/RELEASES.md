@@ -18,6 +18,78 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.17 — 2026-04-25
+
+Two unrelated improvements bundled in one release: a stale startup
+banner is fixed, and the `RemoteAgent` abstraction (Phase 3b.1 + 3b.2
+of the monorepo refactor) lands as additive scaffolding.
+
+**Startup banner fix.** `main.py` had hard-coded `"WardSOAR v0.5
+(Phase 5+6 online)"` in the pipeline-init banner since the v0.22.7
+public release — nine releases of stale text in every operator's log.
+The banner now reads from `wardsoar.pc.__version__` like the About
+dialog does, and a regression test prevents the literal `"v0.5"` /
+`"Phase 5+6"` from coming back.
+
+**`RemoteAgent` scaffolding (Phase 3b.1 + 3b.2).** Two new modules
+land under `packages/wardsoar-core/src/wardsoar/core/remote_agents/`:
+
+- `protocol.py` — runtime-checkable `RemoteAgent` protocol with the
+  five async operations every agent must implement (`check_status`,
+  `add_to_blocklist`, `remove_from_blocklist`, `is_blocked`,
+  `list_blocklist`). Fail-safe by contract: implementations must catch
+  transport errors internally and return `False` / empty list rather
+  than raising.
+- `registry.py` — small `RemoteAgentRegistry` (register / unregister /
+  get / all_agents / names / `__len__` / `__contains__`) with an
+  `isinstance(..., RemoteAgent)` guard at registration time.
+- `netgate_agent.py` — concrete `NetgateAgent` that wraps the existing
+  `PfSenseSSH` transport via composition. Exposes the protocol surface
+  plus three Netgate-specific operations (`run_read_only`,
+  `apply_suricata_runmode`, `migrate_alias_to_urltable`) and a
+  temporary `ssh` property as an escape hatch for the legacy call
+  sites (audit / tamper / apply) until Phase 3b.3 migrates them to
+  consume the protocol type directly.
+
+This release is **purely additive**: no existing call site changed,
+`PfSenseSSH` and the free-function helpers stay public and importable.
+Phase 3b.3 (responder / rule_manager / audit migration to consume the
+protocol) ships separately so the riskier change can be reviewed and
+rolled back independently.
+
+- **File**: `WardSOAR_0.22.17.msi`
+- **Tests**: 1434 green, 2 skipped (+35 vs v0.22.16: 14 protocol +
+  registry tests, 15 NetgateAgent delegation tests, 1 banner
+  regression test, +5 collected from new files)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+### What's new — for contributors
+
+- New protocol contract in `wardsoar.core.remote_agents.protocol`. Any
+  future agent (Virus Sniff Pi, third-party sensor) implements this
+  one type; pipeline code consumes the protocol, not concrete classes.
+- `NetgateAgent.from_credentials(...)` factory for the common path;
+  inject a pre-built `PfSenseSSH` directly in tests to control the
+  transport's lifecycle.
+- The `ssh` property on `NetgateAgent` is intentional, not a leak —
+  it lets the audit / tamper / apply layers keep using their existing
+  free-function helpers during Phase 3b.3's incremental migration.
+  It will be removed once every call site takes the protocol.
+
+### What's NOT in this release
+
+- No call site migration. `responder`, `rule_manager`, `netgate_audit`,
+  `netgate_tamper`, `netgate_apply`, `healthcheck`, and `main.py` still
+  consume `PfSenseSSH` directly. Phase 3b.3 will migrate them.
+- No streaming abstraction. EVE alert ingestion still goes through
+  `ssh_streamer` / `pipeline_controller` and is pfSense-shaped. A
+  formal `stream_alerts()` protocol method will be added once the
+  Virus Sniff appliance lands and we have a second concrete agent to
+  validate the design against (Phase 3b.4).
+
+---
+
 ## v0.22.16 — 2026-04-25
 
 Final UI-controller extraction (refactor V3.5) — `EngineWorker`
