@@ -1,0 +1,81 @@
+# WardSOAR pre-commit configuration.
+#
+# One-time setup (Windows venv):
+#   .venv\Scripts\pip install pre-commit
+#   .venv\Scripts\pre-commit install
+#
+# Run all hooks against the whole repo (CI-equivalent sweep):
+#   .venv\Scripts\pre-commit run --all-files
+#
+# Hooks reuse the project venv (.venv/Scripts/python.exe) so the
+# tooling versions match exactly what scripts/build.ps1 and the
+# manual quality gates use. The five quality checks documented in
+# CLAUDE.md (black, ruff, mypy --strict, bandit, pip-audit) all run
+# here, plus the architectural test that enforces the UI layering
+# decision (no PySide6 outside wardsoar.pc.ui).
+#
+# pip-audit runs against requirements.txt and is too slow for
+# every-commit; it is wired up as a manual stage instead — invoke
+# with: .venv\Scripts\pre-commit run --hook-stage manual pip-audit
+
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2000]
+
+  - repo: local
+    hooks:
+      - id: black
+        name: black (format check)
+        entry: .venv/Scripts/python.exe -m black --line-length=100 --fast --check
+        language: system
+        types: [python]
+        pass_filenames: true
+
+      - id: ruff
+        name: ruff (lint + banned-api)
+        entry: .venv/Scripts/python.exe -m ruff check
+        language: system
+        types: [python]
+        pass_filenames: true
+
+      - id: mypy
+        name: mypy --strict (src only)
+        entry: .venv/Scripts/python.exe -m mypy --strict
+        language: system
+        types: [python]
+        files: ^packages/.*/src/.*\.py$
+        pass_filenames: true
+
+      - id: bandit
+        name: bandit (security, severity LL+)
+        entry: .venv/Scripts/python.exe -m bandit -ll
+        language: system
+        types: [python]
+        files: ^packages/.*/src/.*\.py$
+        pass_filenames: true
+
+      - id: pytest-architecture
+        name: pytest test_architecture (UI layering enforcement)
+        entry: .venv/Scripts/python.exe -m pytest packages/wardsoar-core/tests/test_architecture.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: pip-audit
+        name: pip-audit (CVE check, manual stage)
+        entry: .venv/Scripts/python.exe -m pip_audit -r requirements.txt --no-deps
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]

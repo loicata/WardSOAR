@@ -22,7 +22,10 @@ from wardsoar.core.remote_agents.pfsense_alias_migrate import (
     migrate_alias_to_urltable,
     migrate_xml_in_place,
 )
-from wardsoar.core.remote_agents.pfsense_aliastable import DEFAULT_ALIAS_DIR, DEFAULT_ALIAS_FILE_PATH
+from wardsoar.core.remote_agents.pfsense_aliastable import (
+    DEFAULT_ALIAS_DIR,
+    DEFAULT_ALIAS_FILE_PATH,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures — mini config.xml snippets

@@ -304,6 +304,48 @@ cross-platform regardless of the operator's PC OS.
 
 ---
 
+### 5.9 UI layering — PySide6 only inside ``ui/`` *(2026-04-25)*
+
+WardSOAR PC keeps a 100 % native PySide6 + Fluent Design UI. **No
+webview, no `QWebEngineView`, no local HTTP server.** This eliminates
+the local network attack surface (CSRF, DNS rebinding, XSS through
+Suricata payloads) and saves ~150 MB on the MSI by not bundling
+Chromium.
+
+**Strict separation of business logic and presentation.**
+``PySide6`` / ``qfluentwidgets`` imports are forbidden anywhere except
+``packages/wardsoar-pc/src/wardsoar/pc/ui/``.
+
+| Layer | Path | May import |
+|-------|------|------------|
+| core (cross-platform) | `packages/wardsoar-core/src/wardsoar/core/` | stdlib + non-Qt third-party |
+| pc (Windows business logic) | `packages/wardsoar-pc/src/wardsoar/pc/` (excluding `ui/`) | as core + pywin32, WMI, Sysmon, YARA |
+| ui (presentation) | `packages/wardsoar-pc/src/wardsoar/pc/ui/` | everything above + PySide6, qfluentwidgets, shiboken6 |
+| controllers (UI ↔ core bridge) | `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/` | the only place where Qt signals/slots wrap core API |
+
+**Why three options preserved at no immediate cost:**
+1. Unit-test core business logic without a ``QApplication``.
+2. Reuse core modules in non-Qt contexts (Virus Sniff appliance
+   on Linux ARM64 has no Qt; future CLI; future API daemon).
+3. Expose a future API surface without untangling presentation
+   from logic.
+
+**Enforcement:**
+- Architectural test —
+  [`packages/wardsoar-core/tests/test_architecture.py`](../packages/wardsoar-core/tests/test_architecture.py)
+  scans every ``.py`` outside ``ui/`` and fails if it sees a banned
+  import.
+- Lint rule — ``[tool.ruff.lint.flake8-tidy-imports.banned-api]``
+  in [`pyproject.toml`](../pyproject.toml) (rule code TID251).
+- Pre-commit — [`.pre-commit-config.yaml`](../.pre-commit-config.yaml)
+  runs ruff + the architecture test on every commit. Install once
+  with ``.venv\Scripts\pre-commit install``.
+
+See [`CLAUDE.md`](../CLAUDE.md) section 10 for the contributor-facing
+checklist and coverage targets per layer.
+
+---
+
 ## 6. Remote Agent abstraction
 
 To unify the way external sensors plug in, `wardsoar-core` will

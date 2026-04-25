@@ -321,3 +321,79 @@ Add these items to the existing Step 7 checklist:
 - [ ] For CRITICAL modules: Pass 2 (adversary review) completed and findings documented
 - [ ] For CRITICAL modules: property-based tests cover key invariants
 - [ ] For CRITICAL modules: mutation score ≥ 85%
+- [ ] Any new module touches PySide6/qfluentwidgets only if it lives under
+      `packages/wardsoar-pc/src/wardsoar/pc/ui/` (UI layering — see section 10)
+
+
+### 10. UI architecture & layering — native Qt only, business logic Qt-free
+
+## UI layering — PySide6 only inside ``ui/``
+
+### Decision (2026-04-25)
+WardSOAR keeps a 100% native PySide6 + Fluent Design UI
+(``PySide6-Fluent-Widgets``, GPL-3.0, license-compatible).
+
+- **No webview, no QWebEngineView, no local HTTP server.**
+  Eliminates the local network attack surface (CSRF, DNS rebinding,
+  XSS through Suricata payloads) and saves ~150 MB on the MSI by
+  not bundling Chromium.
+- **Strict separation of business logic and presentation.**
+  PySide6 / qfluentwidgets imports are forbidden anywhere except
+  ``packages/wardsoar-pc/src/wardsoar/pc/ui/``.
+
+### Layer contract
+
+| Layer | Path | Imports allowed |
+|-------|------|-----------------|
+| core (cross-platform) | `packages/wardsoar-core/src/wardsoar/core/` | stdlib, `wardsoar.core.*`, third-party non-Qt |
+| pc (Windows-specific business logic) | `packages/wardsoar-pc/src/wardsoar/pc/` (excluding `ui/`) | as core + pywin32, WMI, Sysmon, YARA, Defender |
+| ui (presentation) | `packages/wardsoar-pc/src/wardsoar/pc/ui/` | everything above + PySide6, qfluentwidgets, shiboken6 |
+| controllers (UI ↔ core bridge) | `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/` | as ui — but should be the only place where Qt signals/slots wrap core API |
+
+Modules outside ``ui/`` MUST NOT contain ``from PySide6`` or
+``import PySide6``. Same for ``qfluentwidgets``, ``PyQt5``,
+``PyQt6``, ``shiboken6``.
+
+### Enforcement (automated)
+
+| Mechanism | Location |
+|-----------|----------|
+| Architectural test | `packages/wardsoar-core/tests/test_architecture.py` (regex scan; fails the suite if Qt is imported anywhere outside `ui/`) |
+| Lint rule | `[tool.ruff.lint.flake8-tidy-imports.banned-api]` in `pyproject.toml` (TID251) — ruff fails the build if any source file outside `ui/` imports the banned modules |
+| Pre-commit hook | `.pre-commit-config.yaml` runs ruff + the architecture test on every commit |
+
+To activate the pre-commit hook locally after cloning:
+
+```powershell
+.venv\Scripts\pip install pre-commit
+.venv\Scripts\pre-commit install
+```
+
+Run a CI-equivalent sweep manually:
+
+```powershell
+.venv\Scripts\pre-commit run --all-files
+.venv\Scripts\pre-commit run --hook-stage manual pip-audit
+```
+
+### Coverage targets per layer
+
+| Layer | Minimum coverage |
+|-------|------------------|
+| `wardsoar.core` | **90%** |
+| `wardsoar.pc.ui.controllers` | **80%** |
+| `wardsoar.pc.ui` (widgets/views) | **70%** |
+| `wardsoar.pc` (non-ui Windows logic) | **80%** |
+
+Configured in ``pyproject.toml`` ``[tool.coverage]`` (cf. section 11
+of this file). The pre-commit hook does not gate on coverage today
+(too slow); the project CI gates on these thresholds.
+
+### Justification
+
+This separation preserves three options at no immediate cost:
+1. Unit-testing core business logic without a `QApplication`.
+2. Reusing core modules in other loicata products
+   (Virus Sniff appliance — Linux ARM64, no Qt).
+3. Exposing a future API surface without untangling presentation
+   from logic.

@@ -174,7 +174,10 @@ class Pipeline:
         # back over the last ~60 s of socket history. The background
         # task is started from the engine loop once asyncio is up
         # (see src/ui/engine_bridge.py).
-        from wardsoar.pc.process_snapshot_buffer import NetConnectionsBuffer, attach_buffer_to_analyzer
+        from wardsoar.pc.process_snapshot_buffer import (
+            NetConnectionsBuffer,
+            attach_buffer_to_analyzer,
+        )
 
         self._conn_buffer = NetConnectionsBuffer()
         attach_buffer_to_analyzer(self._forensics, self._conn_buffer)

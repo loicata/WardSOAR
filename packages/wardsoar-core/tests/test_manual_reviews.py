@@ -1,17 +1,14 @@
-"""Tests for the Manual Review workflow (v0.16.0).
+"""Tests for the Manual Review storage layer (v0.16.0).
 
-Covers the storage layer (append / load / merge) and the Qt
-dialog's submission signal. The dialog tests use the shared qapp
-fixture from :mod:`tests.test_ui`.
+Storage-only — append / load / merge. The Qt dialog tests live in
+``packages/wardsoar-pc/tests/test_manual_review_dialog.py`` (split
+in v0.22.11 to enforce the UI layering decision: ``wardsoar.core``
+must stay PySide6-free).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-
-import pytest
-from PySide6.QtWidgets import QApplication
 
 from wardsoar.core.manual_reviews import (
     ManualReview,
@@ -21,11 +18,6 @@ from wardsoar.core.manual_reviews import (
     merge_into_history,
     new_review,
 )
-from wardsoar.pc.ui.views.alerts import ManualReviewDialog
-
-# ---------------------------------------------------------------------------
-# Storage layer
-# ---------------------------------------------------------------------------
 
 
 class TestStorage:
@@ -150,71 +142,5 @@ class TestMerge:
                 )
             },
         )
-        # Alerts without a valid _ts must not be matched.
         for alert in history:
             assert "manual_review" not in alert
-
-
-# ---------------------------------------------------------------------------
-# Dialog
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def qapp() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        import sys
-
-        app = QApplication(sys.argv)
-    return app
-
-
-class TestManualReviewDialog:
-    def _record(self) -> dict[str, Any]:
-        return {
-            "_ts": "2026-04-22T05:00:26+00:00",
-            "src_ip": "185.199.109.133",
-            "dest_ip": "192.168.2.100",
-            "signature": "SURICATA STREAM excessive retransmissions",
-            "signature_id": "2210054",
-            "verdict": "filtered",
-        }
-
-    def test_emits_verdict_and_notes(self, qapp: QApplication) -> None:
-        dialog = ManualReviewDialog(self._record())
-        captured: list[tuple[str, str, str, str]] = []
-        dialog.review_submitted.connect(lambda a, b, c, d: captured.append((a, b, c, d)))
-        # Pick "Confirmed" (index 1 in the _MANUAL_VERDICT_CHOICES tuple).
-        dialog._verdict_combo.setCurrentIndex(1)
-        dialog._notes_edit.setPlainText("This IP is clearly malicious.")
-        dialog._on_save_clicked()
-        assert captured == [
-            (
-                "2026-04-22T05:00:26+00:00",
-                "filtered",
-                "confirmed",
-                "This IP is clearly malicious.",
-            )
-        ]
-
-    def test_refuses_empty_submission(self, qapp: QApplication) -> None:
-        """Operator must pick an override OR write a note."""
-        dialog = ManualReviewDialog(self._record())
-        received: list[tuple[str, str, str, str]] = []
-        dialog.review_submitted.connect(lambda a, b, c, d: received.append((a, b, c, d)))
-        dialog._verdict_combo.setCurrentIndex(0)  # keep-original sentinel
-        dialog._notes_edit.setPlainText("")
-        dialog._on_save_clicked()
-        assert received == []  # nothing emitted
-
-    def test_note_only_submission_is_valid(self, qapp: QApplication) -> None:
-        dialog = ManualReviewDialog(self._record())
-        received: list[tuple[str, str, str, str]] = []
-        dialog.review_submitted.connect(lambda a, b, c, d: received.append((a, b, c, d)))
-        dialog._verdict_combo.setCurrentIndex(0)  # keep-original
-        dialog._notes_edit.setPlainText("Just a note, verdict is fine.")
-        dialog._on_save_clicked()
-        assert len(received) == 1
-        assert received[0][2] == ""  # empty operator_verdict
-        assert "note" in received[0][3].lower()

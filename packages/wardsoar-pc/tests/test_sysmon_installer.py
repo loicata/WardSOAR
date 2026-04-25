@@ -63,9 +63,7 @@ class TestFindInstallScript:
         assert result is not None
         assert result.name == "install-sysmon.ps1"
 
-    def test_describe_script_location_returns_path(
-        self, _real_repo_data_dir: None
-    ) -> None:
+    def test_describe_script_location_returns_path(self, _real_repo_data_dir: None) -> None:
         location = describe_script_location()
         assert "install-sysmon.ps1" in location
 

@@ -154,7 +154,9 @@ class TestRunQuery:
     def test_powershell_missing_returns_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("wardsoar.pc.sysmon_events.win_paths.POWERSHELL", str(tmp_path / "ghost.exe"))
+        monkeypatch.setattr(
+            "wardsoar.pc.sysmon_events.win_paths.POWERSHELL", str(tmp_path / "ghost.exe")
+        )
         result = _run_sysmon_event3_query(datetime.now(timezone.utc), 30)
         assert result == []
 

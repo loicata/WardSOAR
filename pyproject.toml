@@ -48,6 +48,30 @@ line-length = 100
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# Default ruff rules (E + F) plus flake8-tidy-imports banned-api so
+# we can enforce the UI layering decision: PySide6 / qfluentwidgets
+# may only be imported inside packages/wardsoar-pc/.../ui/.
+# See test_architecture.py and docs/ARCHITECTURE.md ("UI layering").
+extend-select = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"PySide6".msg = "PySide6 imports allowed only under wardsoar.pc.ui (see docs/ARCHITECTURE.md UI layering)."
+"PyQt5".msg = "Use PySide6 instead, restricted to wardsoar.pc.ui."
+"PyQt6".msg = "Use PySide6 instead, restricted to wardsoar.pc.ui."
+"qfluentwidgets".msg = "qfluentwidgets imports allowed only under wardsoar.pc.ui."
+"shiboken6".msg = "shiboken6 imports allowed only under wardsoar.pc.ui."
+
+[tool.ruff.lint.per-file-ignores]
+# The ui subtree is the one place Qt is allowed in production code.
+"packages/wardsoar-pc/src/wardsoar/pc/ui/**/*.py" = ["TID251"]
+# wardsoar-pc tests may construct widgets and dialogs to validate
+# them (test_ui.py, test_manual_review_dialog.py, etc.). The
+# wardsoar-core test scope stays Qt-free — that is enforced both
+# by this rule (no exception for core tests) and by
+# test_architecture.py.
+"packages/wardsoar-pc/tests/**/*.py" = ["TID251"]
+
 [tool.mypy]
 strict = true
 # Teach mypy about the monorepo packages so ``wardsoar.core.*``

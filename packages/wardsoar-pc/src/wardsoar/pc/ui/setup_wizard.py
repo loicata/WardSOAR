@@ -1113,7 +1113,7 @@ class SetupWizard(QDialog):
         try:
             import subprocess  # nosec B404 — required to restrict .env ACL via icacls; hardcoded args
 
-            from src import win_paths
+            from wardsoar.pc import win_paths
 
             subprocess.run(  # nosec B603 — absolute path, os.getlogin() is the current process owner
                 [
