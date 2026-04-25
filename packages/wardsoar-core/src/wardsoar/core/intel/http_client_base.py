@@ -45,6 +45,8 @@ import os
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, Optional
@@ -52,6 +54,47 @@ from typing import Any, Optional
 import httpx
 
 logger = logging.getLogger("ward_soar.intel.http_client")
+
+
+def _parse_retry_after_seconds(header_value: Optional[str]) -> Optional[float]:
+    """Parse the ``Retry-After`` HTTP header into a positive number of seconds.
+
+    Per RFC 7231 the header is either an integer count of seconds
+    or an HTTP-date. We accept both and clamp to a sensible range
+    (0 < value <= 24h) so a malformed or hostile value cannot keep
+    the client off forever.
+
+    Returns ``None`` when the header is missing, malformed, in the
+    past, or above the 24h cap.
+    """
+    if not header_value:
+        return None
+    raw = header_value.strip()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        try:
+            seconds = float(raw)
+        except ValueError:
+            return None
+    else:
+        try:
+            target = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return None
+        if target is None:
+            return None
+        if target.tzinfo is None:
+            # HTTP-date is required to be GMT but be defensive.
+            target = target.replace(tzinfo=timezone.utc)
+        seconds = (target - datetime.now(timezone.utc)).total_seconds()
+
+    if seconds <= 0:
+        return None
+    if seconds > 24 * 3600:
+        return None
+    return seconds
 
 
 @dataclass(frozen=True)
@@ -212,6 +255,16 @@ class HttpReputationClient:
     #: causes a single 429.
     _NEGATIVE_CACHE_TTL_S: float = 15 * 60
 
+    #: Default cooldown after a 429 ("Too Many Requests") when the
+    #: server did not return a ``Retry-After`` header. 60 s matches
+    #: the typical per-minute rate-limiter granularity of free tiers
+    #: (GreyNoise community, OTX, AbuseIPDB). v0.22.15 — added so a
+    #: single 429 trips the breaker immediately rather than burning
+    #: ``_CIRCUIT_BREAKER_THRESHOLD`` more requests in transit (the
+    #: API is *already* asking us to back off — there is no value in
+    #: ignoring its first plea).
+    _RATE_LIMIT_DEFAULT_COOLDOWN_S: float = 60.0
+
     def __init__(self, cache: IpReputationCache, http_timeout_s: float = 10.0) -> None:
         self._cache = cache
         self._http_timeout_s = http_timeout_s
@@ -284,6 +337,23 @@ class HttpReputationClient:
 
         try:
             raw = await self._fetch_raw(ip, key)
+        except httpx.HTTPStatusError as exc:
+            # 429 is a structured "back off" signal — distinct from
+            # transient HTTP errors. A single 429 trips the breaker
+            # immediately for the duration the API asked for (or a
+            # 60 s default), so we do not waste ``_CIRCUIT_BREAKER_THRESHOLD``
+            # more requests on an API that is already refusing us.
+            #
+            # Other status errors fall through to the generic handler
+            # below, where the 5-strike rule still applies (a single
+            # 503 should not lock the client out).
+            if exc.response.status_code == 429:
+                self._open_breaker_for_rate_limit(ip, exc.response.headers.get("Retry-After"))
+                return None
+            detail = str(exc) or type(exc).__name__
+            logger.warning("intel.%s: HTTP error on %s: %s", self.name, ip, detail)
+            self._record_failure(ip)
+            return None
         except httpx.HTTPError as exc:
             # ``str(exc)`` is empty for some httpx exceptions (observed
             # on 2026-04-23 with ``intel.alienvault_otx: HTTP error on
@@ -379,6 +449,41 @@ class HttpReputationClient:
                 self._consecutive_failures,
                 self._CIRCUIT_BREAKER_COOLDOWN_S,
             )
+
+    def _open_breaker_for_rate_limit(self, ip: str, retry_after_header: Optional[str]) -> None:
+        """Trip the breaker immediately on a 429, honouring ``Retry-After``.
+
+        A 429 is the API explicitly asking us to back off, distinct
+        from a transient connection error — there is no value in
+        burning ``_CIRCUIT_BREAKER_THRESHOLD`` more requests waiting
+        for the threshold to be reached. The negative cache is also
+        touched so the same IP does not retry inside the cooldown
+        window even if the breaker reopens later.
+
+        Logged at INFO (not WARNING): rate limiting is a normal,
+        handled condition — distinct from real failures the operator
+        should investigate.
+        """
+        cooldown = (
+            _parse_retry_after_seconds(retry_after_header) or self._RATE_LIMIT_DEFAULT_COOLDOWN_S
+        )
+        # Touch the negative cache too so the same IP cannot squeeze
+        # in once the cooldown ends but before another IP request has
+        # exercised the client and reset the breaker on success.
+        self._negative_cache[ip] = time.monotonic() + max(cooldown, self._NEGATIVE_CACHE_TTL_S)
+        # Extend (never shorten) any existing breaker window so a
+        # later 429 with a longer Retry-After cannot be undone by an
+        # earlier short-cooldown trip.
+        new_open_until = time.monotonic() + cooldown
+        if new_open_until > self._circuit_open_until:
+            self._circuit_open_until = new_open_until
+        logger.info(
+            "intel.%s: rate limited (429) on %s — suppressing calls for %.0fs%s",
+            self.name,
+            ip,
+            cooldown,
+            " (Retry-After honoured)" if retry_after_header else "",
+        )
 
     def _record_success(self) -> None:
         """Reset breaker state after a successful fetch.

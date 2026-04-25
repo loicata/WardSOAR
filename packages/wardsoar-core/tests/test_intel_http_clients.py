@@ -261,10 +261,35 @@ async def test_query_ip_caches_subsequent_calls(tmp_path: Path, monkeypatch: Any
 
 
 class _FailingClient(VirusTotalClient):
-    """Client whose ``_fetch_raw`` raises httpx.HTTPError every time.
+    """Client whose ``_fetch_raw`` raises an HTTP 429 every time.
 
-    Used to drive the circuit breaker into the ``open`` state and
-    assert that repeated calls are suppressed without further HTTP.
+    Used by the rate-limit test path: a single 429 must trip the
+    breaker immediately (v0.22.15) rather than burning through
+    ``_CIRCUIT_BREAKER_THRESHOLD`` more requests.
+    """
+
+    def __init__(self, cache: IpReputationCache, retry_after: str | None = None) -> None:
+        super().__init__(cache=cache)
+        self.fetch_count = 0
+        self._retry_after = retry_after
+
+    async def _fetch_raw(self, ip: str, api_key: str) -> Any:
+        import httpx
+
+        self.fetch_count += 1
+        request = httpx.Request("GET", "https://example.test/")
+        headers = {"Retry-After": self._retry_after} if self._retry_after else {}
+        response = httpx.Response(status_code=429, request=request, headers=headers)
+        raise httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+
+
+class _GenericFailingClient(VirusTotalClient):
+    """Client whose ``_fetch_raw`` raises a generic transport error.
+
+    Used for the 5-strike circuit-breaker tests: a single transient
+    error (DNS blip, RST, timeout) must NOT trip the breaker —
+    only sustained failure should. Distinct from the 429 path which
+    trips immediately because the API explicitly asks us to back off.
     """
 
     def __init__(self, cache: IpReputationCache) -> None:
@@ -275,9 +300,7 @@ class _FailingClient(VirusTotalClient):
         import httpx
 
         self.fetch_count += 1
-        request = httpx.Request("GET", "https://example.test/")
-        response = httpx.Response(status_code=429, request=request)
-        raise httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+        raise httpx.RemoteProtocolError("connection lost")
 
 
 @pytest.mark.asyncio
@@ -301,11 +324,16 @@ async def test_negative_cache_suppresses_retry_on_same_ip(tmp_path: Path, monkey
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_opens_after_threshold(tmp_path: Path, monkeypatch: Any) -> None:
-    """After N consecutive failures across different IPs, further
-    calls are suppressed without HTTP — protecting what's left of the
-    daily quota until the cooldown expires."""
+    """After N consecutive *generic* failures across different IPs,
+    further calls are suppressed without HTTP — protecting what's
+    left of the daily quota until the cooldown expires.
+
+    Uses the generic-failure client (transport error) because 429s
+    now trip the breaker immediately on a single occurrence
+    (v0.22.15); the threshold rule still applies to non-429 errors.
+    """
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
-    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
+    client = _GenericFailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
 
     threshold = client._CIRCUIT_BREAKER_THRESHOLD  # noqa: SLF001
     for i in range(threshold):
@@ -322,10 +350,11 @@ async def test_circuit_breaker_closes_after_cooldown(tmp_path: Path, monkeypatch
     """Manually expire the cooldown; a new attempt must hit HTTP again.
 
     Real cooldown is 15 min; we shorten it via the class-level
-    attribute so the test can run instantly.
+    attribute so the test can run instantly. Uses the generic
+    failing client so the 5-strike rule is what trips the breaker.
     """
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
-    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
+    client = _GenericFailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
 
     threshold = client._CIRCUIT_BREAKER_THRESHOLD  # noqa: SLF001
     for i in range(threshold):
@@ -345,10 +374,15 @@ async def test_circuit_breaker_closes_after_cooldown(tmp_path: Path, monkeypatch
 @pytest.mark.asyncio
 async def test_success_resets_consecutive_failures(tmp_path: Path, monkeypatch: Any) -> None:
     """One successful call zeroes the failure counter so a single
-    transient blip does not push the client to the brink of tripping."""
+    transient blip does not push the client to the brink of tripping.
+
+    Uses the generic failing client because 429s do not increment
+    ``_consecutive_failures`` — they trip the breaker through a
+    different code path.
+    """
     monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
     cache = IpReputationCache(db_path=tmp_path / "r.db")
-    failing = _FailingClient(cache=cache)
+    failing = _GenericFailingClient(cache=cache)
 
     await failing.query_ip("10.0.0.1")
     assert failing._consecutive_failures == 1  # noqa: SLF001
@@ -432,3 +466,206 @@ async def test_negative_cache_expires_after_ttl(tmp_path: Path, monkeypatch: Any
 
     await client.query_ip("1.2.3.4")
     assert client.fetch_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Explicit 429 handling (v0.22.15 — GreyNoise rate-limit follow-up)
+# ---------------------------------------------------------------------------
+
+
+class TestParseRetryAfter:
+    """Unit tests for the ``Retry-After`` header parser."""
+
+    def test_integer_seconds(self) -> None:
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        assert _parse_retry_after_seconds("60") == 60.0
+        assert _parse_retry_after_seconds(" 30 ") == 30.0
+
+    def test_http_date_in_the_future(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        from email.utils import format_datetime
+
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        target = datetime.now(timezone.utc) + timedelta(seconds=120)
+        header = format_datetime(target, usegmt=True)
+        result = _parse_retry_after_seconds(header)
+        assert result is not None
+        # Allow some clock-drift tolerance (test execution time).
+        assert 60 <= result <= 180
+
+    def test_http_date_in_the_past_returns_none(self) -> None:
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        # RFC 1123 date well in the past.
+        assert _parse_retry_after_seconds("Wed, 21 Oct 2015 07:28:00 GMT") is None
+
+    def test_missing_header_returns_none(self) -> None:
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        assert _parse_retry_after_seconds(None) is None
+        assert _parse_retry_after_seconds("") is None
+        assert _parse_retry_after_seconds("   ") is None
+
+    def test_malformed_returns_none(self) -> None:
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        assert _parse_retry_after_seconds("not-a-date") is None
+        assert _parse_retry_after_seconds("-1") is None  # not a digit string
+
+    def test_above_24h_cap_returns_none(self) -> None:
+        """Hostile or buggy server cannot lock us out for a week."""
+        from wardsoar.core.intel.http_client_base import _parse_retry_after_seconds
+
+        assert _parse_retry_after_seconds(str(48 * 3600)) is None
+
+
+@pytest.mark.asyncio
+async def test_429_trips_breaker_immediately(tmp_path: Path, monkeypatch: Any) -> None:
+    """A single 429 must open the breaker — distinct from the 5-strike
+    rule that applies to generic failures.
+
+    Regression for the GreyNoise rate-limit observation on
+    2026-04-25: the legacy code burned 4 more requests reaching the
+    threshold while the API was already explicitly asking us to back
+    off."""
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
+
+    # Fresh state: breaker closed, no failures recorded.
+    assert client._is_circuit_open() is False  # noqa: SLF001
+    assert client._consecutive_failures == 0  # noqa: SLF001
+
+    # Exactly one 429 → breaker opens.
+    assert await client.query_ip("1.2.3.4") is None
+    assert client.fetch_count == 1
+    assert client._is_circuit_open() is True  # noqa: SLF001
+    # The 429 path must NOT increment ``_consecutive_failures``;
+    # that counter belongs to the generic 5-strike rule.
+    assert client._consecutive_failures == 0  # noqa: SLF001
+
+    # A second IP would also be blocked silently — without HTTP.
+    assert await client.query_ip("5.6.7.8") is None
+    assert client.fetch_count == 1
+
+
+@pytest.mark.asyncio
+async def test_429_with_retry_after_seconds_uses_that_cooldown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When the server returns ``Retry-After: 30`` the breaker stays
+    open for ~30 s, not the 60 s default."""
+    import time
+
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"), retry_after="30")
+
+    before = time.monotonic()
+    await client.query_ip("1.2.3.4")
+    after = time.monotonic()
+
+    # Cooldown window should be ~30 s from the moment the 429
+    # arrived, not the 60 s default.
+    expected_lower = before + 30 - 1  # 1 s tolerance
+    expected_upper = after + 30 + 1
+    assert expected_lower <= client._circuit_open_until <= expected_upper  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_429_without_retry_after_uses_default_cooldown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """No ``Retry-After`` header → the 60 s default kicks in."""
+    import time
+
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"), retry_after=None)
+
+    before = time.monotonic()
+    await client.query_ip("1.2.3.4")
+    after = time.monotonic()
+
+    expected_default = client._RATE_LIMIT_DEFAULT_COOLDOWN_S  # noqa: SLF001
+    expected_lower = before + expected_default - 1
+    expected_upper = after + expected_default + 1
+    assert expected_lower <= client._circuit_open_until <= expected_upper  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_429_logs_at_info_level_not_warning(
+    tmp_path: Path, monkeypatch: Any, caplog: Any
+) -> None:
+    """Rate-limited is a normal handled condition; logging at
+    WARNING would create operator-fatigue noise. INFO matches the
+    existing convention for fail-safe routes elsewhere in the
+    codebase (cf. v0.22.9 RFC1918 / whitelist log demotions)."""
+    import logging
+
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"))
+
+    with caplog.at_level(logging.INFO, logger="ward_soar.intel.http_client"):
+        await client.query_ip("1.2.3.4")
+
+    rate_limit_logs = [r for r in caplog.records if "rate limited" in r.getMessage().lower()]
+    assert rate_limit_logs, "expected an INFO log for the 429 trip"
+    assert all(
+        r.levelno == logging.INFO for r in rate_limit_logs
+    ), "429 must NOT log at WARNING — it is a handled signal, not an error"
+
+
+@pytest.mark.asyncio
+async def test_429_breaker_window_only_extends_never_shrinks(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """If two 429s arrive in quick succession with different
+    ``Retry-After`` values, the *longer* window must win.
+
+    Without this rule, a later 429 with a 5 s Retry-After could
+    cancel an earlier 60 s window and let traffic resume too soon.
+    """
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    client = _FailingClient(cache=IpReputationCache(db_path=tmp_path / "r.db"), retry_after="600")
+    await client.query_ip("1.2.3.4")
+    long_window = client._circuit_open_until  # noqa: SLF001
+
+    # Now fake a second 429 with a much shorter Retry-After. Since
+    # the breaker is already open and the IP is in the negative
+    # cache, query_ip would short-circuit; call the handler directly
+    # to exercise the "only extends" path.
+    client._open_breaker_for_rate_limit("9.9.9.9", "10")  # noqa: SLF001
+    short_window = client._circuit_open_until  # noqa: SLF001
+
+    assert (
+        short_window == long_window
+    ), "shorter Retry-After must NOT shrink an already-longer breaker window"
+
+
+@pytest.mark.asyncio
+async def test_429_negative_cache_extended_to_at_least_cooldown(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """When ``Retry-After`` exceeds the per-IP negative-cache TTL
+    (15 min default), the negative cache must extend to match.
+
+    Otherwise an IP could re-fetch inside the cooldown window once
+    the negative TTL expired but before the breaker was reset by an
+    unrelated success."""
+    import time
+
+    monkeypatch.setenv("VIRUSTOTAL_API_KEY", "fake-key")
+    long_cooldown_s = client_threshold = 60 * 60  # 1 hour
+    client = _FailingClient(
+        cache=IpReputationCache(db_path=tmp_path / "r.db"),
+        retry_after=str(long_cooldown_s),
+    )
+
+    before = time.monotonic()
+    await client.query_ip("1.2.3.4")
+    expiry = client._negative_cache["1.2.3.4"]  # noqa: SLF001
+
+    # Negative cache should extend to the longer of:
+    #   - the default _NEGATIVE_CACHE_TTL_S (15 min)
+    #   - the rate-limit cooldown (1 hour here)
+    assert expiry >= before + client_threshold - 1
