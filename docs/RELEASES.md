@@ -18,6 +18,57 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.18 — 2026-04-25
+
+Phase 3b.3 of the monorepo refactor — pipeline call sites now consume
+the `RemoteAgent` protocol type instead of the concrete `PfSenseSSH`
+class. The runtime behaviour is identical (the only `RemoteAgent`
+shipped today is `NetgateAgent`, which wraps `PfSenseSSH`), but the
+typing change means swapping in a future agent (Virus Sniff Pi,
+third-party sensor) requires zero modification to `responder`,
+`rule_manager`, or `healthcheck`.
+
+### What changed
+
+- `wardsoar.core.responder.ThreatResponder.__init__` — `ssh` parameter
+  type widened from `PfSenseSSH` to `RemoteAgent`. The hot path
+  (block / unblock / is-blocked / list) only ever calls the protocol
+  surface, so no behaviour change.
+- `wardsoar.core.rule_manager.RuleManager.__init__` — same widening on
+  the `ssh` parameter. The cleanup loop and emergency unblock only call
+  protocol methods.
+- `wardsoar.pc.healthcheck.HealthChecker.__init__` — `pfsense_ssh`
+  parameter type widened from `PfSenseSSH | None` to
+  `RemoteAgent | None`. The healthcheck only calls
+  `RemoteAgent.check_status()`.
+- `wardsoar.pc.main.Pipeline.__init__` — now constructs
+  `NetgateAgent.from_credentials(...)` instead of a bare `PfSenseSSH`.
+  The single instance feeds the responder / rule_manager / healthcheck
+  (as a `RemoteAgent`) and the four Netgate-specific modules
+  (`netgate_audit`, `netgate_tamper`, `netgate_apply`,
+  `netgate_custom_rules`) which still consume the underlying
+  `PfSenseSSH` via the temporary `NetgateAgent.ssh` escape hatch.
+
+### What's NOT in this release
+
+The four Netgate-specific modules (`netgate_audit`, `netgate_tamper`,
+`netgate_apply`, `netgate_custom_rules`) still take a raw `PfSenseSSH`.
+A follow-up will migrate them to consume `NetgateAgent` directly so the
+`NetgateAgent.ssh` escape hatch can be removed.
+
+The streaming abstraction (`stream_alerts()`) is also still pfSense-shaped
+and stays out of scope until the Virus Sniff appliance lands and we have
+a second concrete agent to validate the design against (Phase 3b.4).
+
+- **File**: `WardSOAR_0.22.18.msi`
+- **Tests**: 1434 green, 2 skipped (zero regression vs v0.22.17 — the
+  change is type-system-only and existing `MagicMock(spec=PfSenseSSH)`
+  fixtures still satisfy the `RemoteAgent` protocol structurally)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+---
+
 ## v0.22.17 — 2026-04-25
 
 Two unrelated improvements bundled in one release: a stale startup

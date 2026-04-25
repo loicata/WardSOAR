@@ -15,7 +15,7 @@
 
   <Package Name="WardSOAR"
            Manufacturer="Loic Ader"
-           Version="0.22.17"
+           Version="0.22.18"
            UpgradeCode="7B2E5F4A-1C3D-4E8F-A9B0-6D7E8F9A0B1C"
            Scope="perMachine"
            Language="1033"
