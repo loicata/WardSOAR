@@ -18,7 +18,20 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
-## v0.22.22 — 2026-04-25
+## v0.22.22 — 2026-04-25 ⚠️ BROKEN — DO NOT INSTALL
+
+The MSI built for this release fails on launch with
+`Failed to start embedded python interpreter`. PyInstaller bootstrap
+crashes despite all 1493 tests passing and `wix build` succeeding.
+Root cause unknown as of the rollback. **Use v0.22.21 until the
+regression is fixed in v0.22.23.**
+
+Recovery if accidentally installed: `msiexec /x WardSOAR_0.22.22.msi`
+then re-install v0.22.21.
+
+---
+
+(Original v0.22.22 notes below — code intent, not what shipped.)
 
 Adds the `WindowsFirewallBlocker` — a local-enforcement
 `RemoteAgent` backed by `netsh advfirewall firewall`. Pipeline now
