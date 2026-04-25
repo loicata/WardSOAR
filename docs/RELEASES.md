@@ -18,20 +18,78 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
-## v0.22.22 — 2026-04-25 ⚠️ BROKEN — DO NOT INSTALL
+## v0.22.23 — 2026-04-25
 
-The MSI built for this release fails on launch with
-`Failed to start embedded python interpreter`. PyInstaller bootstrap
-crashes despite all 1493 tests passing and `wix build` succeeding.
-Root cause unknown as of the rollback. **Use v0.22.21 until the
-regression is fixed in v0.22.23.**
+Architectural cleanup: **`wardsoar-core` is now strictly platform-agnostic
+— `psutil` removed from the package's dependency list.** The single core
+usage (`responder.kill_local_process`) was the last bleed of OS-host
+concerns into the cross-platform layer; it now delegates to a new
+Protocol method `RemoteAgent.kill_process_on_target`.
 
-Recovery if accidentally installed: `msiexec /x WardSOAR_0.22.22.msi`
-then re-install v0.22.21.
+### Why this matters for Virus Sniff
+
+Before the refactor, a future `wardsoar.vs.main.Pipeline` running on
+the Raspberry Pi appliance could have called `responder.kill_local_process(pid)`
+and `psutil.Process(pid).kill()` would have terminated a process **on
+the RPi itself** — the connected PC's process table is unreachable
+across the USB Gadget cable. Three failure modes were possible:
+PID inexistent (caught), PID matches a victim daemon (catastrophic),
+or no `process_id` ever passed (relies on dev discipline).
+
+The new contract makes the bug **architecturally impossible**:
+
+| Agent | `kill_process_on_target(pid)` |
+|---|---|
+| `WindowsFirewallBlocker` (co-resident on PC) | `psutil.Process(pid).terminate()` ✅ |
+| `NetgateAgent` (SSH off-host to pfSense) | `raise NotImplementedError` |
+| `NoOpAgent` (degenerate fallback) | `raise NotImplementedError` |
+| `PfSenseSSH` (transport, off-host) | `raise NotImplementedError` |
+| Future `VsAgent` (Virus Sniff RPi off-host) | `raise NotImplementedError` |
+
+The responder catches `NotImplementedError`, returns a `BlockAction.NONE`
+action, and keeps the IP block applied. The kill is silently skipped
+when the agent doesn't co-reside with the target.
+
+### Changes
+
+* `RemoteAgent` Protocol gains `kill_process_on_target(pid: int) -> tuple[bool, str]`
+  — six methods total (was five).
+* `WindowsFirewallBlocker.kill_process_on_target` implements via `psutil`
+  (returns `(True, process_name)` on success, `(False, error_message)`
+  on `NoSuchProcess` / `AccessDenied` / `OSError`).
+* `NetgateAgent`, `NoOpAgent`, `PfSenseSSH` all raise `NotImplementedError`
+  with explicit messages explaining the off-host topology.
+* `responder.py` no longer imports `psutil` — `kill_local_process`
+  delegates to `self._ssh.kill_process_on_target(pid)` and translates
+  the result into a `ResponseAction`.
+* `psutil>=5.9.0` moved from `wardsoar-core/pyproject.toml` to
+  `wardsoar-pc/pyproject.toml`.
+
+### Coverage
+
+1501 tests green (+8 vs v0.22.22 baseline), 5 quality gates green
+(black, ruff, mypy --strict, bandit, pip-audit), architecture test
+green (no Qt outside `pc/ui/`).
+
+### Artefact
+
+- `WardSOAR_0.22.23.msi` (95.8 MB, 100,493,557 bytes)
+- SHA-256: `3b0c1596492741fe9f74d1d9fa15e277ee0c319ccc49a49d6b397cf7ed09b836`
+
+### Note on v0.22.22
+
+The original v0.22.22 release was titled "BROKEN — DO NOT INSTALL"
+on GitHub due to an MSI launch failure. **Re-install on 2026-04-25
+proved the MSI does work** — the binary in `Program Files (x86)`
+matches `dist/` byte-for-byte (MD5 `dd7c977e3ea9d3d0b281ab52e47bdd61`).
+The original failure was likely a transient install-time issue.
+v0.22.23 supersedes v0.22.22 with the psutil migration on top.
 
 ---
 
-(Original v0.22.22 notes below — code intent, not what shipped.)
+## v0.22.22 — 2026-04-25 (functional, supersized by v0.22.23)
+
+(Original v0.22.22 notes below — code intent and what actually shipped.)
 
 Adds the `WindowsFirewallBlocker` — a local-enforcement
 `RemoteAgent` backed by `netsh advfirewall firewall`. Pipeline now
