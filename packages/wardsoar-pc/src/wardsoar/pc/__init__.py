@@ -8,4 +8,4 @@ the top-level meta-distribution's ``__version__`` (see the root
 ``pyproject.toml``) and the WiX product version.
 """
 
-__version__ = "0.22.13"
+__version__ = "0.22.14"

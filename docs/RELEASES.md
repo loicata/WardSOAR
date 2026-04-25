@@ -18,6 +18,90 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.14 — 2026-04-25
+
+Third UI-controller extraction (refactor V3.3) — the largest one
+yet. The Netgate appliance operations move to a new
+`NetgateController`. Six Qt signals to forward, eight methods
+extracted (six async + one sync-on-loop + two sync helpers). Same
+façade-with-delegation pattern as V3.2 / V3.4; behaviour is
+preserved end to end.
+
+- **File**: `WardSOAR_0.22.14.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `ed725a49aa5c6ab55171888f645ee6ce12250a08e908d6f165ef650b0c109503`
+- **Tests**: 1354 green, 2 skipped (+26 — full unit coverage of
+  the new controller including 5 sync→async bridge tests on a
+  real asyncio loop, one per async request method)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+- **Coverage**: `wardsoar.pc.ui.controllers` package now at **100%**
+  (3 controllers: HistoryController + ManualActionController +
+  NetgateController, target was 80%)
+
+### What's new — for contributors
+
+- New module
+  `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/netgate_controller.py`
+  (327 SLOC). Owns:
+  - 6 async-or-threadsafe request methods (`request_audit`,
+    `request_establish_baseline`, `request_tamper_check`,
+    `request_apply`, `request_deploy_custom_rules`,
+    `request_reset_cleanup`)
+  - 6 corresponding `_execute_*` workers (5 async + 1 sync —
+    `_execute_reset_cleanup` is sync because the underlying
+    pipeline op is pure filesystem)
+  - 2 synchronous helpers the UI calls directly:
+    `applicable_fix_ids` and `preview_custom_rules`
+  - 6 Qt signals: `audit_completed`, `baseline_established`,
+    `tamper_check_completed`, `apply_completed`,
+    `custom_rules_deployed`, `reset_cleanup_completed`
+- `EngineWorker.__init__` instantiates `NetgateController` and
+  forwards all six signals via Qt signal-to-signal connections
+  so the existing `connect()` calls in `app.py:528-568` keep
+  working unchanged.
+- `EngineWorker.request_netgate_*`, `netgate_applicable_fix_ids`,
+  and `preview_custom_rules` become one-line delegates.
+- All six failure-payload shapes are preserved bit-for-bit from
+  the legacy in-place implementation (each signal had a custom
+  fail-safe shape — `audit_completed` carries `findings: []` and
+  `ssh_reachable: False`, `baseline_established` only carries
+  `error`, `apply_completed` returns one entry per requested
+  fix_id, etc.).
+- New test file
+  `packages/wardsoar-pc/tests/test_netgate_controller.py` with 30
+  test methods. Notable: 5 sync→async bridge tests (one per
+  async request method) drive a real asyncio loop end-to-end so
+  the lambda bodies inside `call_soon_threadsafe` are actually
+  exercised — closes a gap that pure mock-based tests would
+  leave at 96% coverage.
+
+### Why this matters
+
+V3.3 is the largest extraction in the migration plan
+(~250 SLOC moved out of `EngineWorker`). The pattern was already
+validated on V3.2 (Qt-free) and V3.4 (Qt + 2 signals), so this
+extraction was mechanical: same façade, same lazy `loop_provider`,
+same coroutine-inside-the-lambda discipline, same
+signal-to-signal forwarding. The only new mechanic is the
+mixed sync/async surface — `request_reset_cleanup` schedules a
+plain callable while the other five schedule a coroutine — and
+the test suite covers both paths explicitly.
+
+### `EngineWorker` SLOC trajectory
+
+- v0.22.11 (pre-refactor): **1067 SLOC**
+- v0.22.12 (after V3.2):     989 SLOC (-78)
+- v0.22.13 (after V3.4):     933 SLOC (-134 vs origin)
+- **v0.22.14 (after V3.3):   806 SLOC (-261 vs origin, -25%)**
+
+One concern left to extract — V3.5 `PipelineController` (~300 SLOC,
+the `QThread.run` loop + `on_ssh_line` + `_process_*`). After
+that, `EngineWorker` becomes a thin lifecycle shell that
+coordinates the four controllers.
+
+---
+
 ## v0.22.13 — 2026-04-25
 
 Second UI-controller extraction (refactor V3.4). Operator-driven
