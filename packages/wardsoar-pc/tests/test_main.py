@@ -141,6 +141,27 @@ class TestSourceTopologyBranching:
         assert "no_op" in pipeline._agent_registry
         assert "netgate" not in pipeline._agent_registry
 
+    def test_standalone_pc_mode_uses_windows_firewall_blocker(self) -> None:
+        """Netgate=False + suricata_local=True activates the netsh blocker."""
+        from wardsoar.pc.windows_firewall import WindowsFirewallBlocker
+
+        pipeline = _make_pipeline_with_sources(
+            {"netgate": False, "suricata_local": True}
+        )
+        assert pipeline._netgate is None
+        assert isinstance(pipeline._netgate_agent, WindowsFirewallBlocker)
+        assert "windows_firewall" in pipeline._agent_registry
+        assert "no_op" not in pipeline._agent_registry
+
+    def test_no_op_only_when_truly_no_source(self) -> None:
+        """Both off = NoOpAgent (degenerate case the questionnaire prevents)."""
+        from wardsoar.core.remote_agents import NoOpAgent
+
+        pipeline = _make_pipeline_with_sources(
+            {"netgate": False, "suricata_local": False}
+        )
+        assert isinstance(pipeline._netgate_agent, NoOpAgent)
+
 
 class TestNetgateOpsGuardWhenDisabled:
     """Netgate-specific entry points return safe defaults when disabled."""

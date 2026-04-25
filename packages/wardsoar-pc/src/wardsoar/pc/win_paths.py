@@ -21,5 +21,7 @@ ARP = os.path.join(_SYSTEM32, "ARP.EXE")
 ICACLS = os.path.join(_SYSTEM32, "icacls.exe")
 # Service Control Manager CLI — used to probe whether Sysmon is running.
 SC = os.path.join(_SYSTEM32, "sc.exe")
+# Network shell — used by WindowsFirewallBlocker for ``advfirewall``.
+NETSH = os.path.join(_SYSTEM32, "netsh.exe")
 # Windows Defender command-line scanner. Path is stable on Windows 10/11 x64.
 MPCMDRUN = os.path.join(_PROGRAM_FILES, "Windows Defender", "MpCmdRun.exe")

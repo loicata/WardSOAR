@@ -101,18 +101,23 @@ class Pipeline:
 
         # Build the remote enforcement agent based on the operator's
         # answers in the SourcesQuestionnaire (persisted under
-        # config.sources). When Netgate=True we plug in a real
-        # NetgateAgent; when False we plug in a NoOpAgent that
-        # honestly reports "no remote enforcement available" so the
-        # responder / rule_manager / healthcheck consumers (typed
-        # against the RemoteAgent protocol since Phase 3b.3) keep
-        # working without conditional None plumbing.
+        # config.sources). Three branches:
         #
-        # Configs predating v0.22.20 (no sources: key) default to
-        # Netgate=True for backward compatibility — the existing
-        # operator base is Netgate-only and would be surprised by a
-        # silent switch to no-op mode.
+        #   * netgate=True            -> real NetgateAgent (legacy default,
+        #                                rétro-compat for configs without
+        #                                a sources: key);
+        #   * netgate=False
+        #     + suricata_local=True   -> WindowsFirewallBlocker (standalone
+        #                                PC mode — local netsh-based blocks);
+        #   * netgate=False
+        #     + suricata_local=False  -> NoOpAgent (degenerate: the
+        #                                SourcesQuestionnaire's "≥1 source"
+        #                                rule should make this unreachable
+        #                                in practice, but the branch
+        #                                exists so the pipeline never
+        #                                crashes on a hand-edited config).
         netgate_enabled: bool = bool(config.sources.get("netgate", True))
+        suricata_local_enabled: bool = bool(config.sources.get("suricata_local", False))
         pfsense_cfg = config.responder.get("pfsense", {})
         ssh_key_path = pfsense_cfg.get("ssh_key_path", "") or os.getenv("WARD_SSH_KEY_PATH", "")
 
@@ -123,6 +128,7 @@ class Pipeline:
         # the protocol-typed handle every other consumer takes.
         self._netgate: Optional[NetgateAgent] = None
         self._netgate_agent: RemoteAgent
+        agent_registry_name: str
         if netgate_enabled:
             self._netgate = NetgateAgent.from_credentials(
                 host=config.network.get("pfsense_ip", "192.168.2.1"),
@@ -132,25 +138,35 @@ class Pipeline:
                 blocklist_table=pfsense_cfg.get("blocklist_table", "blocklist"),
             )
             self._netgate_agent = self._netgate
+            agent_registry_name = "netgate"
+        elif suricata_local_enabled:
+            from wardsoar.pc.windows_firewall import WindowsFirewallBlocker
+
+            logger.info(
+                "config.sources: standalone-PC mode (netgate=False, "
+                "suricata_local=True) — using WindowsFirewallBlocker "
+                "for local netsh-based enforcement. Blocking requires "
+                "WardSOAR to run with administrator privileges."
+            )
+            self._netgate_agent = WindowsFirewallBlocker()
+            agent_registry_name = "windows_firewall"
         else:
             logger.warning(
-                "config.sources.netgate is False — remote firewall enforcement "
-                "is disabled. Verdicts will still be computed but blocks will "
-                "not reach a Netgate. Local Windows Firewall blocking is not "
-                "yet implemented; operators wanting standalone-PC mode should "
-                "track the v0.22.x roadmap."
+                "config.sources: no enforcement agent configured "
+                "(netgate=False, suricata_local=False). Verdicts will "
+                "still be computed but blocks will go nowhere. The "
+                "SourcesQuestionnaire normally prevents this state — "
+                "check config.yaml if you reach this branch."
             )
             self._netgate_agent = NoOpAgent()
+            agent_registry_name = "no_op"
 
         # Single in-process registry of named agents — feeds future
         # multi-agent dispatching once VirusSniffAgent lands. For now
         # the registry holds the single active agent under the name
-        # the operator picked in the questionnaire.
+        # the branch above selected.
         self._agent_registry = RemoteAgentRegistry()
-        self._agent_registry.register(
-            "netgate" if netgate_enabled else "no_op",
-            self._netgate_agent,
-        )
+        self._agent_registry.register(agent_registry_name, self._netgate_agent)
         from wardsoar.core.config import get_bundle_dir, get_data_dir
 
         block_tracker = BlockTracker(persist_path=get_data_dir() / "block_tracker.json")
