@@ -18,6 +18,61 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.12 — 2026-04-25
+
+First UI-controller extraction (refactor V3.2). The legacy
+1067-SLOC `EngineWorker` god-class loses its history-persistence
+concern to a new `HistoryController`. Behaviour is preserved end
+to end; only the call structure changes.
+
+- **File**: `WardSOAR_0.22.12.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `b6ce45180ad32b21b91349d98812afb1a5cba65a749a03c338d0a642485667df`
+- **Tests**: 1311 green, 2 skipped (+30 — full unit coverage of
+  the new controller, no QApplication needed)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+### What's new — for contributors
+
+- New module
+  `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/history_controller.py`
+  (175 SLOC). Owns `alerts_history.jsonl` persistence and the
+  monthly archive lookup helpers. Pure Python, no Qt — therefore
+  unit-testable without a `QApplication`.
+- `EngineWorker.__init__` now instantiates `HistoryController` and
+  stores it as `self._history_controller`. The five public methods
+  (`history_path`, `load_alert_history`, `load_history_page`,
+  `list_history_archives`, `load_history_from_archive`) become
+  one-line delegates so `app.py` and the alerts view do not need
+  to change.
+- Internal call sites that previously did `self._persist_alert(...)`
+  now go through `self._history_controller.persist_alert(...)`.
+- New test file
+  `packages/wardsoar-pc/tests/test_history_controller.py` with 29
+  test methods across construction, persistence, pagination, IO
+  fail-safe behaviour, archive listing and archive round-trip.
+
+### Why this matters
+
+Splitting the god-class is the prerequisite for unit-testing each
+concern in isolation and for opening the door to per-controller
+evolution (Netgate ops, manual actions, EVE pipeline) without
+risking regressions on the others. The history concern was the
+easiest of the four (no threading, no Qt signals) and serves as
+the template for the next three controllers in the migration plan
+(see `packages/wardsoar-pc/src/wardsoar/pc/ui/controllers/README.md`).
+
+### Documented quirk preserved
+
+- `load_alert_history(limit=0)` returns the full list (because
+  `alerts[-0:]` is `alerts[0:]` in Python). The UI never calls the
+  loader with 0 — the contract is "pass `None` or a positive int".
+  The test suite explicitly does not assert any behaviour at zero
+  so the quirk can be fixed later without churning tests.
+
+---
+
 ## v0.22.11 — 2026-04-25
 
 UI architecture decision and enforcement (no functional change).
