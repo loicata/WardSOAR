@@ -21,17 +21,45 @@
            Language="1033"
            Codepage="1252">
 
-    <!-- Upgrade handling: remove previous versions before install -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version of WardSOAR is already installed."
+    <!-- Upgrade handling: remove previous versions AFTER copying the new
+         ones (Schedule="afterInstallExecute"). The default
+         "afterInstallValidate" schedule would uninstall the previous
+         version BEFORE writing the new files, which on this MSI would
+         wipe the HKCU "AutoStartRunKey" Run-key entry that the new
+         install just wrote — same component Guid in both versions, so
+         the old uninstall's reference-count drop sweeps the registry
+         value with it. The "afterInstallExecute" schedule keeps the
+         user's auto-start preserved across upgrades. -->
+    <MajorUpgrade Schedule="afterInstallExecute"
+                  DowngradeErrorMessage="A newer version of WardSOAR is already installed."
                   AllowSameVersionUpgrades="yes" />
 
     <!-- Embed all files in the MSI (no external cab) -->
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
 
-    <!-- UI: minimal wizard (license + install path) -->
-    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <!-- UI: WixUI_Minimal (single welcome+EULA dialog, then progress).
 
-    <!-- License file (resolved relative to this .wxs file) -->
+         We deliberately do NOT use WixUI_InstallDir here even though
+         the install-path picker would be nice on a fresh install.
+         Reason: WixUI_InstallDir's Show conditions route purely on the
+         MSI ``Installed`` property, which makes it impossible to
+         distinguish a major upgrade from a maintenance run — every
+         upgrade was landing on the "Repair / Remove" maintenance
+         dialog (pre-v0.22.19 bug: an operator double-clicked the new
+         MSI to upgrade and got Repair/Remove options instead of an
+         upgrade flow; clicking Remove then uninstalled the old
+         version without installing the new one).
+
+         WixUI_Minimal has no maintenance dialog at all — upgrades go
+         straight through Welcome -> Progress -> Done with no chance
+         of the operator clicking the wrong button. The trade-off
+         (operator can no longer pick a custom install path) is
+         acceptable: every WardSOAR install lives under Program Files
+         and the data dir is in %APPDATA% regardless of where the
+         binary lands. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+
+    <!-- License file (shown by WixUI_Minimal's WelcomeEulaDlg). -->
     <WixVariable Id="WixUILicenseRtf" Value="$(sys.SOURCEFILEDIR)license.rtf" />
 
     <!-- ==================== Directory Structure ==================== -->
@@ -198,9 +226,15 @@
                   Impersonate="yes" />
 
     <InstallExecuteSequence>
+      <!-- ``NOT Installed`` is true on first install AND on the new MSI
+           half of a major upgrade (the new ProductCode hasn't been
+           registered yet at this point in the sequence). Adding
+           ``WIX_UPGRADE_DETECTED`` keeps the launch firing on every
+           upgrade scenario explicitly, in case the schedule order ever
+           moves and ``Installed`` flips earlier. -->
       <Custom Action="LaunchWardSOAR"
               After="InstallFinalize"
-              Condition="NOT Installed" />
+              Condition="NOT Installed OR WIX_UPGRADE_DETECTED" />
     </InstallExecuteSequence>
 
   </Package>
