@@ -18,6 +18,58 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.21 — 2026-04-25
+
+Wires the `sources:` key from v0.22.20 into the runtime
+`RemoteAgentRegistry`. `Pipeline.__init__` now branches on
+`config.sources.netgate`:
+
+  * **Netgate=True** (default for legacy configs without a `sources:`
+    key) — instantiates a real `NetgateAgent.from_credentials(...)`,
+    same as v0.22.20 and earlier.
+  * **Netgate=False** — instantiates a `NoOpAgent` stub that satisfies
+    the `RemoteAgent` protocol but performs no remote enforcement.
+    Verdicts are still computed; `responder.add_to_blocklist()` calls
+    log a WARNING ("no_op_agent: refusing to block X") and return
+    `False` so the responder logs the skipped block with the same
+    diagnostic surface as a real SSH failure. `check_status()` returns
+    `(False, "no remote agent configured")`.
+
+The four Netgate-specific entry points on the Pipeline guard against
+`self._netgate is None` and short-circuit to safe defaults so
+operators can run in standalone-PC mode without the Netgate UI
+buttons crashing the engine:
+
+  * `audit_netgate()` returns `None`
+  * `_get_tamper_detector()` returns `None`
+  * `_get_netgate_applier()` returns `None`
+  * `apply_netgate_fixes()` returns `[]`
+  * `deploy_custom_rules()` returns a `DeployResult(success=False, ...)`
+
+The single in-process `RemoteAgentRegistry` is registered on
+`Pipeline.__init__` under the name `"netgate"` (real agent) or
+`"no_op"` (stub). Future multi-agent dispatching will fan out from
+that registry.
+
+### What's NOT in this release
+
+- The UI does not yet hide the Netgate buttons in standalone-PC
+  mode. Clicking them in the standalone topology will trigger the
+  guards above (no crash, but the result widget will show empty
+  state).
+- Local Suricata installer / Windows Firewall blocker / Npcap
+  downloader — separate follow-up. Until those land, "no remote
+  agent" really does mean "no enforcement" — verdicts are computed
+  but nothing is blocked anywhere.
+
+- **File**: `WardSOAR_0.22.21.msi`
+- **Tests**: 1470 green, 2 skipped (+17 vs v0.22.20: 7 NoOpAgent
+  unit tests + 10 Pipeline source-topology branching tests)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+---
+
 ## v0.22.20 — 2026-04-25
 
 Adds the upstream `SourcesQuestionnaire` — a four-screen pre-wizard
