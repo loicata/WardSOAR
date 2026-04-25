@@ -28,7 +28,7 @@ from wardsoar.pc.healthcheck import HealthChecker
 from wardsoar.pc.main import FilteredResult
 from wardsoar.core.models import DecisionRecord
 from wardsoar.core.watcher import EveJsonWatcher
-from wardsoar.pc.ui.controllers import HistoryController
+from wardsoar.pc.ui.controllers import HistoryController, ManualActionController
 
 if TYPE_CHECKING:
     from wardsoar.pc.main import Pipeline
@@ -142,6 +142,21 @@ class EngineWorker(QThread):
         self._history_controller = HistoryController(
             get_data_dir() / "logs" / "alerts_history.jsonl"
         )
+
+        # v0.22.13 — extraction step V3.4: rollback + manual_block move
+        # to a dedicated controller. The controller is a QObject and
+        # owns its own signals; we forward them to the worker's signals
+        # below so existing callers (``app.py:504-506,583``) keep
+        # working unchanged. The loop is borrowed lazily through a
+        # provider callback because ``self._loop`` is created later
+        # in :meth:`run`.
+        self._manual_action_controller = ManualActionController(
+            pipeline=pipeline,
+            loop_provider=lambda: self._loop,
+            parent=self,
+        )
+        self._manual_action_controller.rollback_completed.connect(self.rollback_completed)
+        self._manual_action_controller.manual_block_completed.connect(self.manual_block_completed)
 
         # v0.11.0 — central intelligence feeds manager. Built at
         # construction so the registries can load their on-disk
@@ -438,45 +453,27 @@ class EngineWorker(QThread):
 
         self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
 
+    # ------------------------------------------------------------------
+    # Manual-action façade — delegates to :class:`ManualActionController`.
+    #
+    # The controller (extracted in v0.22.13, V3.4) owns the actual
+    # rollback / responder dispatch. EngineWorker keeps the same
+    # public API so callers in ``app.py`` do not have to change. The
+    # ``rollback_completed`` and ``manual_block_completed`` signals
+    # are forwarded from the controller to the worker via Qt
+    # signal-to-signal connections set up in :meth:`__init__`.
+    # ------------------------------------------------------------------
+
     def request_rollback(
         self,
         ip: str,
         signature_id: Optional[int] = None,
         reason: Optional[str] = None,
     ) -> None:
-        """Queue a rollback on the worker's event loop.
-
-        Thread-safe: intended to be called from the Qt main thread in
-        response to an "Unblock IP" button click. Schedules the async
-        rollback and emits ``rollback_completed`` when finished.
-        """
-        if self._loop is None or not self._loop.is_running():
-            # Worker not started — nothing to do; surface a synthetic failure.
-            self.rollback_completed.emit(
-                {
-                    "ip": ip,
-                    "success": False,
-                    "error": "Engine not running",
-                }
-            )
-            return
-
-        async def _run() -> None:
-            try:
-                result = await self._pipeline.rollback_block(
-                    ip=ip,
-                    signature_id=signature_id,
-                    reason=reason,
-                )
-                from dataclasses import asdict
-
-                payload = asdict(result)
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Rollback request failed for %s", ip)
-                payload = {"ip": ip, "success": False, "error": str(exc)}
-            self.rollback_completed.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
+        """Delegate to :meth:`ManualActionController.request_rollback`."""
+        self._manual_action_controller.request_rollback(
+            ip=ip, signature_id=signature_id, reason=reason
+        )
 
     def request_manual_block(
         self,
@@ -484,63 +481,10 @@ class EngineWorker(QThread):
         signature_id: Optional[int] = None,
         operator_notes: str = "",
     ) -> None:
-        """Ask the Responder to block ``ip`` on behalf of the operator.
-
-        Triggered by the Manual Review dialog when the operator
-        overrides a verdict to CONFIRMED. We synthesise a
-        :class:`ThreatAnalysis(verdict=CONFIRMED, confidence=0.99)`
-        with the operator's notes in the reasoning, then delegate
-        to ``Responder.respond`` so every safety rail runs
-        (whitelist, CDN allowlist, rate limit). The outcome is
-        emitted via :attr:`manual_block_completed`.
-
-        Thread-safe \u2014 called from the Qt main thread.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.manual_block_completed.emit(
-                {"ip": ip, "success": False, "reason": "Engine not running"}
-            )
-            return
-
-        async def _run() -> None:
-            try:
-                from wardsoar.core.models import ThreatAnalysis, ThreatVerdict
-
-                reasoning = (
-                    operator_notes.strip()
-                    or "Operator manually overrode the pipeline verdict to CONFIRMED."
-                )
-                synthetic = ThreatAnalysis(
-                    verdict=ThreatVerdict.CONFIRMED,
-                    confidence=0.99,
-                    reasoning=f"[Manual review] {reasoning}",
-                    recommended_actions=["ip_block"],
-                )
-                actions = await self._pipeline._responder.respond(  # noqa: SLF001
-                    synthetic,
-                    ip,
-                    process_id=None,
-                    asn_info=None,
-                )
-                blocked = any(
-                    a.action_type.value in ("ip_block", "ip_port_block") and a.success
-                    for a in (actions or [])
-                )
-                if blocked:
-                    reason = "Block installed on pfSense."
-                else:
-                    refused = next(
-                        (a.error_message for a in (actions or []) if a.error_message),
-                        "A safety rule refused the block (whitelist / CDN / rate limit).",
-                    )
-                    reason = refused
-                payload = {"ip": ip, "success": blocked, "reason": reason}
-            except Exception as exc:  # noqa: BLE001 \u2014 defensive
-                logger.exception("Manual block request failed for %s", ip)
-                payload = {"ip": ip, "success": False, "reason": str(exc)}
-            self.manual_block_completed.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
+        """Delegate to :meth:`ManualActionController.request_manual_block`."""
+        self._manual_action_controller.request_manual_block(
+            ip=ip, signature_id=signature_id, operator_notes=operator_notes
+        )
 
     # ------------------------------------------------------------------
     # History façade — delegates to :class:`HistoryController`.
