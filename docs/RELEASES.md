@@ -18,6 +18,88 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.15 — 2026-04-25
+
+Smarter handling of HTTP 429 ("Too Many Requests") responses from
+intel feed APIs. The legacy code treated a 429 as a generic
+failure and waited for 5 consecutive failures before opening the
+circuit breaker — wasting four more requests against an API that
+was already explicitly asking us to back off.
+
+- **File**: `WardSOAR_0.22.15.msi`
+- **Size**: 95.8 MB
+- **SHA-256**: `1df02dcef78a6df70b82a5231d77d5f5bcd4018a377db1e3e34e63940a5d1d80`
+- **Tests**: 1370 green, 2 skipped (+16 — 6 parser tests + 6
+  end-to-end 429 tests + minor refactor of 4 existing tests)
+- **Quality gates**: black, ruff, mypy --strict, bandit, pip-audit
+  — all pass
+
+### What's new — for the operator
+
+The single recurring `intel.greynoise: HTTP error on X: Client
+error '429 Too Many Requests'` WARNING is gone. A 429 now logs
+once at INFO level (`intel.greynoise: rate limited (429) on X —
+suppressing calls for 60s`) and the breaker opens immediately.
+Subsequent intel calls during the cooldown are silently skipped —
+no log spam.
+
+The same logic applies to every other reputation client
+(VirusTotal, AbuseIPDB, AlienVault OTX) since the fix lives in
+the shared base class.
+
+### What's new — for contributors
+
+- New helper `_parse_retry_after_seconds(header)` in
+  `packages/wardsoar-core/src/wardsoar/core/intel/http_client_base.py`.
+  Handles both forms allowed by RFC 7231:
+  - integer seconds: `"60"`
+  - HTTP-date: `"Wed, 21 Oct 2026 07:28:00 GMT"`
+  - clamps to `0 < value <= 24h` so a malformed or hostile
+    Retry-After value cannot lock the client out for a week
+- New class constant
+  `_RATE_LIMIT_DEFAULT_COOLDOWN_S: float = 60.0` — the cooldown
+  used when the server did not return a `Retry-After` header.
+  Matches the typical per-minute granularity of free tiers.
+- New method `_open_breaker_for_rate_limit(ip, retry_after_header)`.
+  Trips the breaker immediately, honours `Retry-After` when
+  present, extends (never shrinks) any existing breaker window,
+  and extends the per-IP negative cache to at least the cooldown
+  duration.
+- `query_ip` now catches `httpx.HTTPStatusError` *before* the
+  generic `httpx.HTTPError` handler. Status code 429 routes to
+  `_open_breaker_for_rate_limit` and returns; everything else
+  falls through to the existing 5-strike rule.
+- 12 new tests:
+  - `TestParseRetryAfter` — 6 unit tests (int / HTTP-date / past /
+    missing / malformed / 24h cap)
+  - 6 integration tests for the 429 path (immediate trip, honours
+    `Retry-After`, default cooldown, INFO log level, breaker
+    window extends-only, negative cache extension)
+- 4 existing tests refactored to use a new `_GenericFailingClient`
+  (raising `RemoteProtocolError`) so the 5-strike rule for
+  non-429 failures is still exercised. The original
+  `_FailingClient` (raising 429) is now repurposed for the new
+  rate-limit tests with an optional `retry_after` parameter.
+
+### Why this matters
+
+Production observation on 2026-04-25 (post-v0.22.14 install):
+```
+12:24:21 WARNING http_client_base: intel.greynoise: HTTP error on
+160.79.104.10: Client error '429 Too Many Requests' for url
+'https://api.greynoise.io/v3/community/...'
+```
+Single 429 → single WARNING → 4 more wasted requests (for any
+other IP that came in during the next ~minute) before the
+breaker opened. With this fix:
+- One 429 → INFO log → breaker opens for 60 s (or whatever the
+  API specified)
+- Zero wasted requests on other IPs during the cooldown
+- WARNING level reserved for genuine errors the operator should
+  investigate (5xx, timeouts, parse failures)
+
+---
+
 ## v0.22.14 — 2026-04-25
 
 Third UI-controller extraction (refactor V3.3) — the largest one
