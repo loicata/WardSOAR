@@ -28,7 +28,11 @@ from wardsoar.pc.healthcheck import HealthChecker
 from wardsoar.pc.main import FilteredResult
 from wardsoar.core.models import DecisionRecord
 from wardsoar.core.watcher import EveJsonWatcher
-from wardsoar.pc.ui.controllers import HistoryController, ManualActionController
+from wardsoar.pc.ui.controllers import (
+    HistoryController,
+    ManualActionController,
+    NetgateController,
+)
 
 if TYPE_CHECKING:
     from wardsoar.pc.main import Pipeline
@@ -158,6 +162,25 @@ class EngineWorker(QThread):
         self._manual_action_controller.rollback_completed.connect(self.rollback_completed)
         self._manual_action_controller.manual_block_completed.connect(self.manual_block_completed)
 
+        # v0.22.14 — extraction step V3.3: Netgate operations move
+        # to a dedicated controller. Six signals to forward via
+        # signal-to-signal connections (same pattern as V3.4) plus
+        # two synchronous helpers (``applicable_fix_ids``,
+        # ``preview_custom_rules``) that the UI calls directly.
+        self._netgate_controller = NetgateController(
+            pipeline=pipeline,
+            loop_provider=lambda: self._loop,
+            parent=self,
+        )
+        self._netgate_controller.audit_completed.connect(self.netgate_audit_completed)
+        self._netgate_controller.baseline_established.connect(self.netgate_baseline_established)
+        self._netgate_controller.tamper_check_completed.connect(self.netgate_tamper_check_completed)
+        self._netgate_controller.apply_completed.connect(self.netgate_apply_completed)
+        self._netgate_controller.custom_rules_deployed.connect(self.netgate_custom_rules_deployed)
+        self._netgate_controller.reset_cleanup_completed.connect(
+            self.netgate_reset_cleanup_completed
+        )
+
         # v0.11.0 — central intelligence feeds manager. Built at
         # construction so the registries can load their on-disk
         # snapshots eagerly. The periodic refresh is started from
@@ -259,199 +282,49 @@ class EngineWorker(QThread):
             except Exception:  # noqa: BLE001 — periodic purge is best-effort
                 logger.debug("alerts_stats: periodic purge raised", exc_info=True)
 
-    def request_netgate_establish_baseline(self) -> None:
-        """Capture a fresh tamper baseline on the worker's event loop.
-
-        Thread-safe — called when the operator clicks *Establish /
-        Re-bless baseline* in the Netgate tab. Emits
-        :attr:`netgate_baseline_established` when done.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_baseline_established.emit({"error": "Engine not running"})
-            return
-
-        async def _run() -> None:
-            try:
-                baseline = await self._pipeline.establish_netgate_baseline()
-                payload = {
-                    "captured_at": baseline.captured_at,
-                    "host": baseline.host,
-                    "entries": len(baseline.entries),
-                }
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Netgate baseline establishment failed")
-                payload = {"error": str(exc)}
-            self.netgate_baseline_established.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
-
-    def request_netgate_tamper_check(self) -> None:
-        """Diff the current Netgate state against the stored baseline.
-
-        Emits :attr:`netgate_tamper_check_completed` with a serialised
-        :class:`~src.netgate_tamper.TamperResult` dict.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_tamper_check_completed.emit(
-                {"error": "Engine not running", "findings": [], "baseline_present": False}
-            )
-            return
-
-        async def _run() -> None:
-            try:
-                result = await self._pipeline.check_netgate_tampering()
-                payload = result.to_dict()
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Netgate tamper check failed")
-                payload = {"error": str(exc), "findings": [], "baseline_present": False}
-            self.netgate_tamper_check_completed.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
-
-    def request_netgate_reset_cleanup(self) -> None:
-        """Purge WardSOAR state tied to a Netgate that just got reset.
-
-        Synchronous on the pipeline side (pure filesystem ops), but the
-        invocation is still marshalled through the worker's event loop
-        so the UI thread never touches non-Qt state directly. Emits
-        :attr:`netgate_reset_cleanup_completed` with a dict of counters
-        plus a pre-formatted ``message`` the UI can display verbatim.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_reset_cleanup_completed.emit(
-                {
-                    "error": "Engine not running",
-                    "baseline_removed": False,
-                    "block_entries_purged": 0,
-                    "trusted_entries_purged": 0,
-                    "errors": ["Engine not running"],
-                    "message": "Engine not running — retry once the pipeline is started.",
-                }
-            )
-            return
-
-        def _run() -> None:
-            from wardsoar.core.netgate_reset import format_result_for_display
-
-            try:
-                result = self._pipeline.cleanup_netgate_state()
-                payload = {
-                    "baseline_removed": result.baseline_removed,
-                    "block_entries_purged": result.block_entries_purged,
-                    "trusted_entries_purged": result.trusted_entries_purged,
-                    "errors": list(result.errors),
-                    "message": format_result_for_display(result),
-                }
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Netgate reset cleanup failed")
-                payload = {
-                    "baseline_removed": False,
-                    "block_entries_purged": 0,
-                    "trusted_entries_purged": 0,
-                    "errors": [str(exc)],
-                    "message": f"Cleanup failed: {exc}",
-                }
-            self.netgate_reset_cleanup_completed.emit(payload)
-
-        self._loop.call_soon_threadsafe(_run)
-
-    def request_netgate_apply(self, fix_ids: list[str]) -> None:
-        """Run safe-apply for the checked audit findings.
-
-        Emits :attr:`netgate_apply_completed` when the whole list is
-        processed, with one :class:`SafeApplyResult` dict per fix id
-        attempted. Stops on first hard failure with no rollback — the
-        result list then ends early.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_apply_completed.emit(
-                [
-                    {"success": False, "error": "Engine not running", "fix_id": fid}
-                    for fid in fix_ids
-                ]
-            )
-            return
-
-        async def _run() -> None:
-            try:
-                outcomes = await self._pipeline.apply_netgate_fixes(fix_ids)
-                payload = [r.to_dict() for r in outcomes]
-            except Exception as exc:  # noqa: BLE001 -- surface any failure
-                logger.exception("Netgate safe-apply failed")
-                payload = [{"success": False, "error": str(exc), "fix_id": "?"}]
-            self.netgate_apply_completed.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
-
-    def netgate_applicable_fix_ids(self) -> set[str]:
-        """Synchronous helper the UI calls to decide which checkboxes are active."""
-        from wardsoar.core.netgate_apply import applicable_fix_ids
-
-        return applicable_fix_ids()
-
-    def request_deploy_custom_rules(self) -> None:
-        """Push the WardSOAR custom Suricata rules to the Netgate.
-
-        Emits :attr:`netgate_custom_rules_deployed` on completion.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_custom_rules_deployed.emit(
-                {"success": False, "error": "Engine not running", "rule_count": 0}
-            )
-            return
-
-        async def _run() -> None:
-            try:
-                result = await self._pipeline.deploy_custom_rules()
-                bundle = self._pipeline.preview_custom_rules()
-                payload = {
-                    "success": result.success,
-                    "bytes_written": result.bytes_written,
-                    "remote_path": result.remote_path,
-                    "rule_count": len(bundle.rules),
-                    "error": result.error,
-                }
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Deploy custom rules failed")
-                payload = {"success": False, "error": str(exc), "rule_count": 0}
-            self.netgate_custom_rules_deployed.emit(payload)
-
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
-
-    def preview_custom_rules(self) -> "Any":
-        """Build the rules bundle *synchronously* (pure in-process).
-
-        The UI calls this from the GUI thread to show the preview
-        dialog before the operator decides to deploy. Since it does
-        not touch SSH it is safe to run outside the worker loop.
-        """
-        return self._pipeline.preview_custom_rules()
+    # ------------------------------------------------------------------
+    # Netgate façade — delegates to :class:`NetgateController`.
+    #
+    # The controller (extracted in v0.22.14, V3.3) owns the actual
+    # SSH-backed audit / baseline / tamper / apply / deploy
+    # machinery and the two synchronous helpers the UI calls
+    # directly. EngineWorker keeps the public API so callers in
+    # ``app.py`` (see ``app.py:528-568``) do not have to change.
+    # The six signals are forwarded from the controller via Qt
+    # signal-to-signal connections set up in :meth:`__init__`.
+    # ------------------------------------------------------------------
 
     def request_netgate_audit(self) -> None:
-        """Kick off a Netgate audit on the worker's event loop.
+        """Delegate to :meth:`NetgateController.request_audit`."""
+        self._netgate_controller.request_audit()
 
-        Thread-safe — called from the Qt main thread when the operator
-        clicks "Run Check" in the Netgate tab. The audit runs
-        asynchronously (it issues ~10 SSH commands, ~5–15 seconds on
-        a healthy Netgate) and the result is emitted as a serialised
-        dict on :attr:`netgate_audit_completed`.
-        """
-        if self._loop is None or not self._loop.is_running():
-            self.netgate_audit_completed.emit(
-                {"error": "Engine not running", "findings": [], "ssh_reachable": False}
-            )
-            return
+    def request_netgate_establish_baseline(self) -> None:
+        """Delegate to :meth:`NetgateController.request_establish_baseline`."""
+        self._netgate_controller.request_establish_baseline()
 
-        async def _run() -> None:
-            try:
-                result = await self._pipeline.audit_netgate()
-                payload = result.to_dict()
-            except Exception as exc:  # noqa: BLE001 — surface any failure
-                logger.exception("Netgate audit request failed")
-                payload = {"error": str(exc), "findings": [], "ssh_reachable": False}
-            self.netgate_audit_completed.emit(payload)
+    def request_netgate_tamper_check(self) -> None:
+        """Delegate to :meth:`NetgateController.request_tamper_check`."""
+        self._netgate_controller.request_tamper_check()
 
-        self._loop.call_soon_threadsafe(lambda: self._loop.create_task(_run()))  # type: ignore[union-attr]
+    def request_netgate_apply(self, fix_ids: list[str]) -> None:
+        """Delegate to :meth:`NetgateController.request_apply`."""
+        self._netgate_controller.request_apply(fix_ids)
+
+    def request_deploy_custom_rules(self) -> None:
+        """Delegate to :meth:`NetgateController.request_deploy_custom_rules`."""
+        self._netgate_controller.request_deploy_custom_rules()
+
+    def request_netgate_reset_cleanup(self) -> None:
+        """Delegate to :meth:`NetgateController.request_reset_cleanup`."""
+        self._netgate_controller.request_reset_cleanup()
+
+    def netgate_applicable_fix_ids(self) -> set[str]:
+        """Delegate to :meth:`NetgateController.applicable_fix_ids`."""
+        return self._netgate_controller.applicable_fix_ids()
+
+    def preview_custom_rules(self) -> "Any":
+        """Delegate to :meth:`NetgateController.preview_custom_rules`."""
+        return self._netgate_controller.preview_custom_rules()
 
     # ------------------------------------------------------------------
     # Manual-action façade — delegates to :class:`ManualActionController`.
