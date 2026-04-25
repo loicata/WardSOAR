@@ -77,6 +77,103 @@ class TestPipelineInit:
 
 
 # ---------------------------------------------------------------------------
+# Pipeline source-topology branching (v0.22.21)
+# ---------------------------------------------------------------------------
+
+
+def _make_pipeline_with_sources(sources: dict[str, bool]) -> Pipeline:
+    """Construct a Pipeline with a custom ``sources`` config block."""
+    with patch.dict(
+        os.environ,
+        {
+            "ANTHROPIC_API_KEY": "test-key",
+            "PFSENSE_API_URL": "https://192.168.1.1/api/v1",
+            "PFSENSE_API_KEY": "test-key",
+            "PFSENSE_API_SECRET": "test-secret",
+        },
+    ):
+        config = AppConfig(
+            responder={"dry_run": True, "max_blocks_per_hour": 20},
+            prescorer={"enabled": True, "mode": "learning", "min_score_for_analysis": 15},
+            sources=sources,
+        )
+        whitelist = WhitelistConfig(ips={"192.168.1.1"})
+        return Pipeline(config, whitelist)
+
+
+class TestSourceTopologyBranching:
+    """Pipeline.__init__ branches on config.sources.netgate."""
+
+    def test_netgate_true_uses_real_netgate_agent(self) -> None:
+        """The legacy / default path: Netgate enabled = real NetgateAgent."""
+        from wardsoar.core.remote_agents import NetgateAgent
+
+        pipeline = _make_pipeline_with_sources({"netgate": True})
+        assert pipeline._netgate is not None
+        assert isinstance(pipeline._netgate, NetgateAgent)
+        # The protocol-typed handle is the same instance.
+        assert pipeline._netgate_agent is pipeline._netgate
+
+    def test_netgate_false_uses_no_op_agent(self) -> None:
+        """No Netgate = NoOpAgent stub (no SSH transport built)."""
+        from wardsoar.core.remote_agents import NoOpAgent
+
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        assert pipeline._netgate is None
+        assert isinstance(pipeline._netgate_agent, NoOpAgent)
+
+    def test_missing_sources_key_defaults_to_netgate_enabled(self) -> None:
+        """Configs predating v0.22.20 (no sources key) default Netgate=True."""
+        from wardsoar.core.remote_agents import NetgateAgent
+
+        pipeline = _make_pipeline_with_sources({})  # empty sources
+        assert pipeline._netgate is not None
+        assert isinstance(pipeline._netgate, NetgateAgent)
+
+    def test_registry_holds_active_agent(self) -> None:
+        """RemoteAgentRegistry registers the chosen agent."""
+        pipeline = _make_pipeline_with_sources({"netgate": True})
+        assert "netgate" in pipeline._agent_registry
+        assert pipeline._agent_registry.get("netgate") is pipeline._netgate_agent
+
+    def test_registry_holds_no_op_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        assert "no_op" in pipeline._agent_registry
+        assert "netgate" not in pipeline._agent_registry
+
+
+class TestNetgateOpsGuardWhenDisabled:
+    """Netgate-specific entry points return safe defaults when disabled."""
+
+    @pytest.mark.asyncio
+    async def test_audit_netgate_returns_none_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        result = await pipeline.audit_netgate()
+        assert result is None
+
+    def test_get_tamper_detector_returns_none_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        assert pipeline._get_tamper_detector() is None
+
+    def test_get_netgate_applier_returns_none_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        assert pipeline._get_netgate_applier() is None
+
+    @pytest.mark.asyncio
+    async def test_apply_netgate_fixes_returns_empty_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        results = await pipeline.apply_netgate_fixes(["any.fix.id"])
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_deploy_custom_rules_returns_error_when_disabled(self) -> None:
+        pipeline = _make_pipeline_with_sources({"netgate": False})
+        result = await pipeline.deploy_custom_rules()
+        assert result.success is False
+        assert "Netgate disabled" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
 # Startup banner tests
 # ---------------------------------------------------------------------------
 

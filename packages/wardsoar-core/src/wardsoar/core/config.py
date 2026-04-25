@@ -141,6 +141,14 @@ class AppConfig(BaseModel):
     change_manager: dict[str, Any] = Field(default_factory=dict)
     replay: dict[str, Any] = Field(default_factory=dict)
     app: dict[str, Any] = Field(default_factory=dict)
+    # v0.22.21: source-topology answers from the SourcesQuestionnaire
+    # (Netgate / Virus Sniff / local Suricata). Drives RemoteAgent
+    # instantiation in Pipeline.__init__ — when ``netgate: False`` the
+    # pipeline plugs a NoOp agent in instead of spinning up an SSH
+    # transport against a non-existent appliance. Configs predating
+    # v0.22.20 (missing this key entirely) default to "Netgate-only"
+    # for backward compatibility.
+    sources: dict[str, Any] = Field(default_factory=dict)
 
 
 class WhitelistConfig(BaseModel):

@@ -42,7 +42,12 @@ from wardsoar.core.logger import log_decision
 from wardsoar.core.metrics import MetricsCollector
 from wardsoar.core.models import DecisionRecord, SuricataAlert, ThreatVerdict
 from wardsoar.core.notifier import Notifier
-from wardsoar.core.remote_agents import NetgateAgent
+from wardsoar.core.remote_agents import (
+    NetgateAgent,
+    NoOpAgent,
+    RemoteAgent,
+    RemoteAgentRegistry,
+)
 from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 from wardsoar.core.prescorer import AlertPreScorer
 from wardsoar.core.prescorer_feedback import PreScorerFeedbackStore
@@ -94,26 +99,58 @@ class Pipeline:
         # because it needs the SSH handle created further down.
         self._tamper_detector: Optional[object] = None
 
-        # Build the Netgate remote agent. It satisfies the
-        # ``RemoteAgent`` protocol consumed by the responder /
-        # rule_manager / healthcheck (Phase 3b.3) and exposes the
-        # Netgate-specific operations (``run_read_only``,
-        # ``apply_suricata_runmode``, ``migrate_alias_to_urltable``)
-        # called by the audit / tamper / apply / custom-rules layers.
-        # The latter still consume the underlying ``PfSenseSSH`` via
-        # the ``.ssh`` property — that escape hatch will go away in
-        # the next phase once the Netgate-specific layers migrate to
-        # the agent's own methods.
+        # Build the remote enforcement agent based on the operator's
+        # answers in the SourcesQuestionnaire (persisted under
+        # config.sources). When Netgate=True we plug in a real
+        # NetgateAgent; when False we plug in a NoOpAgent that
+        # honestly reports "no remote enforcement available" so the
+        # responder / rule_manager / healthcheck consumers (typed
+        # against the RemoteAgent protocol since Phase 3b.3) keep
+        # working without conditional None plumbing.
+        #
+        # Configs predating v0.22.20 (no sources: key) default to
+        # Netgate=True for backward compatibility — the existing
+        # operator base is Netgate-only and would be surprised by a
+        # silent switch to no-op mode.
+        netgate_enabled: bool = bool(config.sources.get("netgate", True))
         pfsense_cfg = config.responder.get("pfsense", {})
         ssh_key_path = pfsense_cfg.get("ssh_key_path", "") or os.getenv("WARD_SSH_KEY_PATH", "")
-        netgate_agent = NetgateAgent.from_credentials(
-            host=config.network.get("pfsense_ip", "192.168.2.1"),
-            ssh_user=pfsense_cfg.get("ssh_user", "admin"),
-            ssh_key_path=ssh_key_path,
-            ssh_port=int(pfsense_cfg.get("ssh_port", 22)),
-            blocklist_table=pfsense_cfg.get("blocklist_table", "blocklist"),
+
+        # ``self._netgate`` is the NetgateAgent typed handle reserved
+        # for the Netgate-specific layers (audit / tamper / apply /
+        # custom_rules). It is None when Netgate is disabled so those
+        # methods can early-return cleanly. ``self._netgate_agent`` is
+        # the protocol-typed handle every other consumer takes.
+        self._netgate: Optional[NetgateAgent] = None
+        self._netgate_agent: RemoteAgent
+        if netgate_enabled:
+            self._netgate = NetgateAgent.from_credentials(
+                host=config.network.get("pfsense_ip", "192.168.2.1"),
+                ssh_user=pfsense_cfg.get("ssh_user", "admin"),
+                ssh_key_path=ssh_key_path,
+                ssh_port=int(pfsense_cfg.get("ssh_port", 22)),
+                blocklist_table=pfsense_cfg.get("blocklist_table", "blocklist"),
+            )
+            self._netgate_agent = self._netgate
+        else:
+            logger.warning(
+                "config.sources.netgate is False — remote firewall enforcement "
+                "is disabled. Verdicts will still be computed but blocks will "
+                "not reach a Netgate. Local Windows Firewall blocking is not "
+                "yet implemented; operators wanting standalone-PC mode should "
+                "track the v0.22.x roadmap."
+            )
+            self._netgate_agent = NoOpAgent()
+
+        # Single in-process registry of named agents — feeds future
+        # multi-agent dispatching once VirusSniffAgent lands. For now
+        # the registry holds the single active agent under the name
+        # the operator picked in the questionnaire.
+        self._agent_registry = RemoteAgentRegistry()
+        self._agent_registry.register(
+            "netgate" if netgate_enabled else "no_op",
+            self._netgate_agent,
         )
-        self._netgate_agent = netgate_agent
         from wardsoar.core.config import get_bundle_dir, get_data_dir
 
         block_tracker = BlockTracker(persist_path=get_data_dir() / "block_tracker.json")
@@ -248,7 +285,7 @@ class Pipeline:
         self._responder = ThreatResponder(
             config.responder,
             whitelist,
-            netgate_agent,
+            self._netgate_agent,
             block_tracker,
             trusted_temp=trusted_temp_registry,
             confidence_threshold=config.analyzer.get("confidence_threshold", 0.7),
@@ -260,13 +297,13 @@ class Pipeline:
         self._rule_manager = RuleManager(
             config.rule_manager,
             whitelist,
-            netgate_agent,
+            self._netgate_agent,
             block_tracker,
             block_duration_hours=config.responder.get("block_duration_hours", 24),
         )
         self._notifier = Notifier(config.notifier)
         self._metrics = MetricsCollector(config.metrics)
-        self._healthcheck = HealthChecker(config.healthcheck, pfsense_ssh=netgate_agent)
+        self._healthcheck = HealthChecker(config.healthcheck, pfsense_ssh=self._netgate_agent)
         self._queue = AlertQueue(config.alert_queue)
 
         # Rollback orchestrator — wired last, after rule_manager is built.
@@ -456,10 +493,21 @@ class Pipeline:
         value is also assigned to :attr:`_last_audit_result` so the
         UI's mode-escalation gate can consult it without re-running
         SSH commands.
+
+        Returns ``None`` when ``config.sources.netgate=False`` — the
+        operator declared no Netgate in the SourcesQuestionnaire so
+        an audit has nothing to check. The UI is expected to hide
+        the Audit button in that mode; this guard is the safety net.
         """
+        if self._netgate is None:
+            logger.warning(
+                "audit_netgate called but Netgate is disabled in config.sources — skipping"
+            )
+            return None
+
         from wardsoar.core.netgate_audit import run_audit
 
-        result = await run_audit(self._netgate_agent, self._config)
+        result = await run_audit(self._netgate, self._config)
         self._last_audit_result = result
         logger.info(
             "netgate_audit: %d findings in %.2fs, any_critical_ko=%s",
@@ -479,13 +527,22 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def _get_tamper_detector(self) -> "Any":
-        """Lazy builder for the detector (reuses SSH + a stable path)."""
+        """Lazy builder for the detector (reuses SSH + a stable path).
+
+        Returns ``None`` when ``config.sources.netgate=False`` — same
+        rationale as :meth:`audit_netgate`. Callers
+        (``netgate_baseline_captured_at``, ``establish_netgate_baseline``,
+        ``check_netgate_tampering``) handle ``None`` by short-circuiting
+        their operation.
+        """
+        if self._netgate is None:
+            return None
         if self._tamper_detector is None:
             from wardsoar.core.config import get_data_dir
             from wardsoar.core.netgate_tamper import NetgateTamperDetector
 
             self._tamper_detector = NetgateTamperDetector(
-                ssh=self._netgate_agent,
+                ssh=self._netgate,
                 baseline_path=get_data_dir() / "netgate_baseline.json",
                 host=self._config.network.get("pfsense_ip", ""),
             )
@@ -589,11 +646,28 @@ class Pipeline:
         return build_bundle(self._known_actors)
 
     async def deploy_custom_rules(self) -> "Any":
-        """Build the custom rules and push them to the Netgate via SSH."""
-        from wardsoar.core.netgate_custom_rules import build_bundle, deploy_bundle
+        """Build the custom rules and push them to the Netgate via SSH.
+
+        Returns a stub :class:`DeployResult` with an error message when
+        ``config.sources.netgate=False`` — same rationale as
+        :meth:`audit_netgate`.
+        """
+        from wardsoar.core.netgate_custom_rules import (
+            DeployResult,
+            build_bundle,
+            deploy_bundle,
+        )
+
+        if self._netgate is None:
+            return DeployResult(
+                success=False,
+                bytes_written=0,
+                remote_path="",
+                error="Netgate disabled in config.sources — no remote rules deployed.",
+            )
 
         bundle = build_bundle(self._known_actors)
-        result = await deploy_bundle(self._netgate_agent, bundle)
+        result = await deploy_bundle(self._netgate, bundle)
         if result.success:
             logger.warning(
                 "netgate_custom_rules: deployed %d rules (%d bytes) to %s",
@@ -610,7 +684,13 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def _get_netgate_applier(self) -> "Any":
-        """Lazy-build the applier so the backup dir is created once."""
+        """Lazy-build the applier so the backup dir is created once.
+
+        Returns ``None`` when ``config.sources.netgate=False`` —
+        callers (``apply_netgate_fixes``) short-circuit accordingly.
+        """
+        if self._netgate is None:
+            return None
         cached = getattr(self, "_netgate_applier", None)
         if cached is not None:
             return cached
@@ -618,7 +698,7 @@ class Pipeline:
         from wardsoar.core.netgate_apply import NetgateApplier
 
         applier = NetgateApplier(
-            ssh=self._netgate_agent,
+            ssh=self._netgate,
             backup_dir=get_data_dir() / "netgate_backups",
         )
         self._netgate_applier = applier
@@ -631,8 +711,17 @@ class Pipeline:
         UI is the only caller; it passes the subset of checked
         findings whose fix id has a registered handler (applicable
         fix ids are exposed via :meth:`netgate_applicable_fix_ids`).
+
+        Returns an empty list when ``config.sources.netgate=False`` —
+        same rationale as :meth:`audit_netgate`.
         """
         applier = self._get_netgate_applier()
+        if applier is None:
+            logger.warning(
+                "apply_netgate_fixes called but Netgate is disabled in "
+                "config.sources — returning empty result"
+            )
+            return []
         results: list[Any] = await applier.safe_apply_many(fix_ids)
         return results
 
