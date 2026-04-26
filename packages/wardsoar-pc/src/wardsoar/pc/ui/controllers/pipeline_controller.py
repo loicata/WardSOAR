@@ -667,17 +667,27 @@ class PipelineController(QObject):
         # do not need to dig into ``_full`` — the serialised
         # DecisionRecord is the source of truth, but the UI hot
         # path stays cheap.
+        #
+        # We use ``getattr(..., None)`` rather than direct attribute
+        # access so test fixtures that hand-roll a DecisionRecord-like
+        # object (or a Mock spec'd against an older schema) do not
+        # crash here. Production records always have the fields —
+        # the new model added them with ``Optional[...] = None``
+        # defaults.
+        record_corroboration = getattr(record, "source_corroboration", None)
         corroboration_value: str | None = (
-            record.source_corroboration.value if record.source_corroboration else None
+            record_corroboration.value if record_corroboration is not None else None
         )
+        record_findings = getattr(record, "divergence_findings", None)
         divergence_explanation: str | None = (
-            record.divergence_findings.explanation if record.divergence_findings else None
+            record_findings.explanation if record_findings is not None else None
         )
         divergence_unexplained: bool = bool(
-            record.divergence_findings is not None and not record.divergence_findings.is_explained
+            record_findings is not None and not record_findings.is_explained
         )
+        record_pre_bump = getattr(record, "verdict_pre_bump", None)
         verdict_pre_bump_value: str | None = (
-            record.verdict_pre_bump.value if record.verdict_pre_bump else None
+            record_pre_bump.value if record_pre_bump is not None else None
         )
 
         # Emit alert for UI.
