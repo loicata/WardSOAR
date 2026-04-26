@@ -13,6 +13,7 @@ The wrapper is pure delegation by design, so the tests focus on:
 
 from __future__ import annotations
 
+from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -156,6 +157,32 @@ class TestRemoteAgentDelegation:
 
         with pytest.raises(NotImplementedError, match="does not co-reside"):
             await agent.kill_process_on_target(1234)
+
+    @pytest.mark.asyncio
+    async def test_stream_alerts_delegates_to_pfsense_ssh(self) -> None:
+        """``stream_alerts`` is a pure pass-through async generator —
+        every event yielded by the underlying SSH transport reaches the
+        consumer in order, untouched."""
+        events = [
+            {"event_type": "alert", "src_ip": "203.0.113.7", "id": 1},
+            {"event_type": "alert", "src_ip": "198.51.100.4", "id": 2},
+            {"event_type": "stats"},  # non-alert events still pass through
+        ]
+
+        async def _fake_stream() -> "AsyncIterator[dict[str, Any]]":
+            for event in events:
+                yield event
+
+        ssh = _ssh_mock()
+        ssh.stream_alerts = MagicMock(return_value=_fake_stream())
+        agent = NetgateAgent(ssh)
+
+        collected: list[dict[str, Any]] = []
+        async for event in agent.stream_alerts():
+            collected.append(event)
+
+        assert collected == events
+        ssh.stream_alerts.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

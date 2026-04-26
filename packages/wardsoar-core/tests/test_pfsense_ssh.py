@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -154,6 +155,145 @@ class TestPfSenseSSHRunCmd:
         assert "table does not exist" in output
         # Single SSH connect — a command-level error must not trigger retry.
         assert mock_asyncssh.connect.call_count == 1
+
+
+class _AsyncIterLines:
+    """Tiny async iterator over a list of strings.
+
+    ``asyncssh``'s real ``process.stdout`` yields decoded lines as a
+    native async iterator. Mocking it with ``AsyncMock`` doesn't quite
+    work because ``async for`` calls ``__aiter__`` / ``__anext__``
+    rather than awaiting individual coroutines. This class provides
+    the right shape with deterministic data.
+    """
+
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = list(lines)
+
+    def __aiter__(self) -> "_AsyncIterLines":
+        return self
+
+    async def __anext__(self) -> str:
+        if not self._lines:
+            raise StopAsyncIteration
+        return self._lines.pop(0)
+
+
+class TestPfSenseSSHStreamAlerts:
+    """``stream_alerts`` opens a long-lived SSH session, runs ``tail -f``
+    on the remote eve.json, and yields parsed JSON events. Reconnection
+    on transport error is automatic; non-JSON lines are dropped."""
+
+    @pytest.mark.asyncio
+    async def test_yields_parsed_events_and_drops_invalid_lines(self) -> None:
+        ssh = _make_ssh()
+        lines = [
+            '{"event_type": "alert", "src_ip": "203.0.113.7"}\n',
+            '{"event_type": "alert", "src_ip": "198.51.100.4"}\n',
+            "not valid json\n",  # silently dropped
+            "\n",  # whitespace-only, dropped
+            '"a string, not a dict"\n',  # JSON-valid but not a dict — dropped
+            '{"event_type": "stats"}\n',
+        ]
+
+        mock_process = MagicMock()
+        mock_process.stdout = _AsyncIterLines(lines)
+        process_cm = AsyncMock()
+        process_cm.__aenter__ = AsyncMock(return_value=mock_process)
+        process_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_conn = MagicMock()
+        mock_conn.create_process = MagicMock(return_value=process_cm)
+        conn_cm = AsyncMock()
+        conn_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        conn_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
+            mock_asyncssh.connect.return_value = conn_cm
+            collected: list[dict[str, Any]] = []
+            # The async generator would re-connect indefinitely once the
+            # mock stdout is exhausted; the consumer breaks after the
+            # third valid event so the generator is ``aclose()``-d cleanly.
+            async for event in ssh.stream_alerts():  # type: ignore[union-attr]
+                collected.append(event)
+                if len(collected) == 3:
+                    break
+
+        assert collected == [
+            {"event_type": "alert", "src_ip": "203.0.113.7"},
+            {"event_type": "alert", "src_ip": "198.51.100.4"},
+            {"event_type": "stats"},
+        ]
+        # Verify the issued shell command targets the operator-supplied
+        # path with single-quote escaping (defence against shell metas).
+        cmd = mock_conn.create_process.call_args[0][0]
+        assert cmd.startswith("tail -n 0 -f '")
+        assert "/var/log/suricata/eve.json" in cmd
+
+    @pytest.mark.asyncio
+    async def test_reconnects_on_transport_error(self) -> None:
+        """First ``asyncssh.connect`` raises (network blip / appliance
+        reload); the generator must back off and reconnect, then yield
+        events normally on the second attempt."""
+        ssh = _make_ssh()
+
+        # First attempt: connect raises before yielding anything.
+        first_cm = AsyncMock()
+        first_cm.__aenter__ = AsyncMock(side_effect=OSError("Connection lost"))
+        first_cm.__aexit__ = AsyncMock(return_value=None)
+
+        # Second attempt: succeeds and yields one event before EOF.
+        mock_process = MagicMock()
+        mock_process.stdout = _AsyncIterLines(['{"event_type": "alert"}\n'])
+        process_cm = AsyncMock()
+        process_cm.__aenter__ = AsyncMock(return_value=mock_process)
+        process_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_conn = MagicMock()
+        mock_conn.create_process = MagicMock(return_value=process_cm)
+        second_cm = AsyncMock()
+        second_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        second_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh,
+            patch("wardsoar.core.remote_agents.pfsense_ssh._STREAM_MIN_RETRY_DELAY_S", 0.0),
+            patch("wardsoar.core.remote_agents.pfsense_ssh._STREAM_MAX_RETRY_DELAY_S", 0.0),
+        ):
+            mock_asyncssh.connect.side_effect = [first_cm, second_cm]
+            collected: list[dict[str, Any]] = []
+            async for event in ssh.stream_alerts():  # type: ignore[union-attr]
+                collected.append(event)
+                if collected:  # break right after the recovery yields
+                    break
+
+        assert collected == [{"event_type": "alert"}]
+        assert mock_asyncssh.connect.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_local_addr_is_forwarded_to_asyncssh(self) -> None:
+        """When the operator supplies a ``local_addr`` (LAN IP to bind to,
+        e.g. to bypass a VPN tunnel), it must reach ``asyncssh.connect``
+        as the documented ``(addr, port)`` tuple."""
+        ssh = _make_ssh()
+
+        mock_process = MagicMock()
+        mock_process.stdout = _AsyncIterLines(['{"k": 1}\n'])
+        process_cm = AsyncMock()
+        process_cm.__aenter__ = AsyncMock(return_value=mock_process)
+        process_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_conn = MagicMock()
+        mock_conn.create_process = MagicMock(return_value=process_cm)
+        conn_cm = AsyncMock()
+        conn_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        conn_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
+            mock_asyncssh.connect.return_value = conn_cm
+            async for _event in ssh.stream_alerts(local_addr="192.168.2.100"):  # type: ignore[union-attr]
+                break
+
+        kwargs = mock_asyncssh.connect.call_args.kwargs
+        assert kwargs["local_addr"] == ("192.168.2.100", 0)
 
 
 class TestPfSenseSSHBlocklist:

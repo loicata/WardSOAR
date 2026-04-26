@@ -38,6 +38,7 @@ real local enforcement path even when no remote agent is plugged in.
 from __future__ import annotations
 
 import logging
+from typing import Any, AsyncIterator
 
 logger = logging.getLogger("ward_soar.remote_agents.no_op")
 
@@ -90,3 +91,12 @@ class NoOpAgent:
                 visible action.
         """
         raise NotImplementedError("NoOpAgent has no target host — kill skipped")
+
+    async def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
+        """Empty alert stream — no-op agent has no source to read from.
+
+        The async generator terminates immediately without yielding;
+        the consumer's ``async for`` loop ends on the first iteration.
+        """
+        return
+        yield  # pragma: no cover — unreachable, declares this as a generator

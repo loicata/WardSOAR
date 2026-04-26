@@ -20,7 +20,7 @@ remains the authoritative check.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -123,5 +123,44 @@ class RemoteAgent(Protocol):
                 Virus Sniff pipeline cannot kill a process on the RPi
                 by mistake while believing it is killing a process on
                 the connected PC.
+        """
+        ...
+
+    def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
+        """Yield Suricata EVE JSON events as they arrive on the agent's host.
+
+        Each yielded item is a parsed JSON object — the canonical EVE
+        event shape (``event_type``, ``alert``, ``flow_id``, ``src_ip``,
+        ``dest_ip``, …). Implementations parse the line themselves so
+        the pipeline never sees raw bytes; broken / non-JSON lines are
+        dropped silently rather than yielded.
+
+        Implementations come in two flavours:
+
+        * **Source agents** (``NetgateAgent`` over SSH+``tail -f``,
+          a future ``VsAgent`` reading the local eve.json on the RPi)
+          open the live stream, yield every parsed event, and return
+          when the consumer breaks out of the loop or calls ``aclose()``
+          on the iterator. They MUST handle transient transport errors
+          internally (reconnect, backoff) and SHOULD NOT raise to the
+          consumer; raising is reserved for unrecoverable misconfiguration.
+        * **Sink-only agents** (``NoOpAgent``, ``WindowsFirewallBlocker``
+          today) yield nothing — the iterator is empty and terminates
+          immediately. They are not a source of alerts; the operator's
+          local Suricata, when wired in, will be a separate streamer.
+
+        Note this is an *async generator function*: the protocol declares
+        ``def`` (not ``async def``) returning ``AsyncIterator``, while
+        concrete implementations use ``async def`` with ``yield`` inside.
+        ``mypy --strict`` accepts this asymmetry.
+
+        Returns:
+            An async iterator of parsed EVE JSON events. The pipeline
+            consumes it as ``async for event in agent.stream_alerts():``.
+
+        Note:
+            The current pipeline still consumes a Qt-based ``SshStreamer``
+            in the UI layer — the migration of that call site to consume
+            this Protocol method is tracked separately (Phase 3b.5).
         """
         ...

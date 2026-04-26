@@ -42,7 +42,7 @@ import asyncio
 import ipaddress
 import logging
 import subprocess  # nosec B404 — netsh is the documented Windows surface
-from typing import Optional
+from typing import Any, AsyncIterator, Optional
 
 import psutil
 
@@ -318,3 +318,15 @@ class WindowsFirewallBlocker:
             return True, proc_name
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError) as exc:
             return False, str(exc)
+
+    async def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
+        """Empty alert stream — Windows Firewall is sink-only today.
+
+        ``WindowsFirewallBlocker`` enforces blocks via ``netsh`` but is
+        not a source of Suricata alerts. When a local Suricata watcher
+        lands (planned alongside Suricata-on-Windows), it will be a
+        separate agent (or this method will gain a real implementation
+        reading the local eve.json).
+        """
+        return
+        yield  # pragma: no cover — unreachable, declares this as a generator

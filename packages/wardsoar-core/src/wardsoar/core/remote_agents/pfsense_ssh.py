@@ -17,7 +17,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 import asyncssh
 
@@ -37,6 +37,16 @@ logger = logging.getLogger("ward_soar.pfsense_ssh")
 # responder falls back to its normal "pfctl add failed" handling.
 _MAX_SSH_RETRIES: int = 2  # 3 attempts total (initial + 2 retries)
 _SSH_RETRY_BASE_DELAY_S: float = 1.0  # 1s, 2s backoff
+
+# Streaming reconnection backoff. Independent of the per-command retry
+# (which short-circuits within seconds): a stream lives for hours and
+# must absorb pfSense reloads / network blips without busy-looping.
+_STREAM_MIN_RETRY_DELAY_S: float = 2.0
+_STREAM_MAX_RETRY_DELAY_S: float = 60.0
+# Default path of the EVE JSON file on a vanilla pfSense + Suricata
+# install. Override per-call via ``stream_alerts(remote_eve_path=…)``
+# when the operator points Suricata at a custom location.
+_DEFAULT_EVE_PATH: str = "/var/log/suricata/eve.json"
 
 
 class PfSenseSSH:
@@ -320,6 +330,102 @@ class PfSenseSSH:
         raise NotImplementedError(
             "PfSenseSSH does not co-reside with the target host — kill skipped"
         )
+
+    async def stream_alerts(
+        self,
+        remote_eve_path: str = _DEFAULT_EVE_PATH,
+        local_addr: str = "",
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream Suricata EVE JSON events from pfSense via SSH+``tail -f``.
+
+        Opens a long-lived SSH session (separate from the per-command
+        sessions used by :meth:`_run_cmd`), runs ``tail -n 0 -f`` on
+        ``remote_eve_path``, parses each line as JSON, and yields the
+        resulting dict to the consumer. Non-JSON lines are dropped
+        silently — pfSense occasionally interleaves daemon notices or
+        truncated writes that have no business reaching the pipeline.
+
+        Reconnection: on any transport error (connection lost, timeout,
+        appliance reload), the session is closed and a new one opened
+        after exponential backoff (2s, 4s, 8s, …, capped at 60s). The
+        async generator never raises a transport exception to the
+        consumer — the only way out is the consumer breaking the
+        ``async for`` loop or calling ``aclose()``.
+
+        Args:
+            remote_eve_path: Path of the EVE JSON file on the pfSense
+                appliance. Defaults to ``/var/log/suricata/eve.json``.
+            local_addr: Local IP address to bind the outbound SSH
+                connection to. Useful when the operator's PC is on a
+                VPN that would otherwise route LAN traffic through the
+                tunnel, breaking SSH to the local appliance. Empty
+                string means OS default routing.
+
+        Yields:
+            Parsed EVE JSON event dictionaries — typically with
+            ``event_type``, ``timestamp``, ``src_ip``, ``dest_ip``,
+            and (for alerts) the ``alert`` sub-document.
+        """
+        retry_delay = _STREAM_MIN_RETRY_DELAY_S
+        # ``cmd`` is constructed from a single hard-coded literal plus
+        # a path that the operator controls via the wizard / config —
+        # not a network-supplied string. Quoting the path defensively
+        # so a future migration to user-editable paths cannot turn an
+        # accidental shell metachar into command injection.
+        quoted_path = remote_eve_path.replace("'", "'\\''")
+        cmd = f"tail -n 0 -f '{quoted_path}'"
+
+        while True:
+            connect_kwargs: dict[str, Any] = {
+                "host": self._host,
+                "port": self._port,
+                "username": self._user,
+                "client_keys": [self._key_path],
+                "known_hosts": None,
+            }
+            if local_addr:
+                connect_kwargs["local_addr"] = (local_addr, 0)
+
+            try:
+                async with asyncssh.connect(  # nosec B507 — local network appliance
+                    **connect_kwargs
+                ) as conn:
+                    logger.info("stream_alerts: SSH connected to %s", self._host)
+                    retry_delay = _STREAM_MIN_RETRY_DELAY_S
+                    async with conn.create_process(cmd) as process:
+                        if process.stdout is None:  # pragma: no cover — asyncssh contract
+                            logger.error("stream_alerts: SSH process stdout is None")
+                            return
+                        async for line in process.stdout:
+                            stripped = line.strip()
+                            if not stripped:
+                                continue
+                            try:
+                                event = json.loads(stripped)
+                            except (json.JSONDecodeError, ValueError):
+                                # Daemon notices, truncated writes — drop
+                                # silently rather than yield broken data
+                                # the pipeline cannot use anyway.
+                                continue
+                            if isinstance(event, dict):
+                                yield event
+            except asyncio.CancelledError:
+                # Consumer broke the iterator. Propagate so asyncio can
+                # tear down the task cleanly; reconnection is the
+                # consumer's call, not ours.
+                raise
+            except Exception as exc:  # noqa: BLE001 — covers OSError + asyncssh.*
+                # Bare ``ConnectionLost()`` has empty ``str(exc)``; fall
+                # back to the class name so the log always identifies
+                # the failure mode.
+                detail = str(exc) or type(exc).__name__
+                logger.warning(
+                    "stream_alerts: transport error (%s) — reconnecting in %.1fs",
+                    detail,
+                    retry_delay,
+                )
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 2, _STREAM_MAX_RETRY_DELAY_S)
 
 
 class BlockTracker:

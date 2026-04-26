@@ -8,6 +8,8 @@ forthcoming ``test_netgate_agent.py`` (Phase 3b.2).
 
 from __future__ import annotations
 
+from typing import Any, AsyncIterator
+
 import pytest
 
 from wardsoar.core.remote_agents import RemoteAgent, RemoteAgentRegistry
@@ -47,6 +49,12 @@ class _FakeAgent:
     async def kill_process_on_target(self, pid: int) -> tuple[bool, str]:
         raise NotImplementedError("FakeAgent off-host by default")
 
+    async def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
+        # Sink-only by default — individual tests can override the
+        # method on the instance to yield events.
+        return
+        yield  # pragma: no cover — declares this as an async generator
+
 
 class _NotAnAgent:
     """Concrete class missing all of the protocol methods."""
@@ -79,7 +87,7 @@ class TestRemoteAgentProtocol:
         assert not isinstance(object(), RemoteAgent)
 
     def test_protocol_method_names(self) -> None:
-        """All six operations are part of the public protocol surface."""
+        """All seven operations are part of the public protocol surface."""
         expected = {
             "check_status",
             "add_to_blocklist",
@@ -87,11 +95,23 @@ class TestRemoteAgentProtocol:
             "is_blocked",
             "list_blocklist",
             "kill_process_on_target",
+            "stream_alerts",
         }
         # ``Protocol`` exposes its members on the class via ``__dict__``;
         # filter out the typing internals that start with an underscore.
         actual = {name for name in vars(RemoteAgent) if not name.startswith("_")}
         assert expected.issubset(actual), expected - actual
+
+    @pytest.mark.asyncio
+    async def test_fake_agent_streams_nothing_by_default(self) -> None:
+        """``stream_alerts`` returns an async iterator; the default fake
+        yields nothing so consumers can ``async for`` it without
+        spinning up a real source."""
+        agent = _FakeAgent()
+        events: list[dict[str, Any]] = []
+        async for event in agent.stream_alerts():
+            events.append(event)
+        assert events == []
 
     @pytest.mark.asyncio
     async def test_fake_agent_off_host_kill_raises(self) -> None:

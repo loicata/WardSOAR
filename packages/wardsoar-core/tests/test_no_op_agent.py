@@ -72,3 +72,13 @@ class TestNoOpAgentBehaviour:
         """
         with pytest.raises(NotImplementedError, match="no target host"):
             await NoOpAgent().kill_process_on_target(1234)
+
+    @pytest.mark.asyncio
+    async def test_stream_alerts_yields_nothing(self) -> None:
+        """The no-op agent is sink-only — its alert stream terminates
+        immediately so an ``async for`` consumer doesn't hang waiting
+        for a source that will never produce events."""
+        events: list[dict[str, object]] = []
+        async for event in NoOpAgent().stream_alerts():
+            events.append(event)
+        assert events == []

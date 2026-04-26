@@ -350,9 +350,7 @@ class TestKillProcessOnTarget:
         mock_proc.terminate.assert_called_once_with()
 
     @pytest.mark.asyncio
-    async def test_no_such_process_returns_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_no_such_process_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lookup race: between alert detection and kill, the process
         already exited. Surface a ``(False, message)`` so the responder
         logs the miss without crashing the pipeline."""
@@ -372,9 +370,7 @@ class TestKillProcessOnTarget:
         assert "99999" in message or "no process" in message.lower()
 
     @pytest.mark.asyncio
-    async def test_access_denied_returns_false(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_access_denied_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Privilege escalation refused: the operator launched WardSOAR
         non-elevated and the OS denies the terminate. Same fail-safe
         contract — return ``(False, message)`` for the responder to log."""
@@ -391,3 +387,16 @@ class TestKillProcessOnTarget:
         success, message = await WindowsFirewallBlocker().kill_process_on_target(1234)
 
         assert success is False
+
+
+class TestStreamAlerts:
+    """``WindowsFirewallBlocker`` is sink-only today — its alert stream
+    must terminate immediately so ``async for`` consumers don't hang
+    waiting for a source it doesn't have."""
+
+    @pytest.mark.asyncio
+    async def test_stream_yields_nothing(self) -> None:
+        events: list[dict[str, object]] = []
+        async for event in WindowsFirewallBlocker().stream_alerts():
+            events.append(event)
+        assert events == []

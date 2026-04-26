@@ -25,6 +25,8 @@ escape hatch from Phase 3b.2 was removed in Phase 3b.3.2.
 
 from __future__ import annotations
 
+from typing import Any, AsyncIterator
+
 from wardsoar.core.remote_agents.pfsense_alias_migrate import (
     AliasMigrationResult,
     migrate_alias_to_urltable,
@@ -108,6 +110,16 @@ class NetgateAgent:
         raise NotImplementedError(
             "NetgateAgent does not co-reside with the target host — kill skipped"
         )
+
+    async def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
+        """Stream EVE JSON events from the pfSense appliance.
+
+        Pure delegation to the underlying SSH transport. The Netgate
+        agent is a *source* agent: it produces alerts from the Suricata
+        instance running on pfSense.
+        """
+        async for event in self._ssh.stream_alerts():
+            yield event
 
     # ------------------------------------------------------------------
     # Netgate-specific operations (no analogue on Virus Sniff)
