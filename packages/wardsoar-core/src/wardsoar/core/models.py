@@ -232,6 +232,23 @@ class DecisionRecord(BaseModel):
     actions_taken: list[ResponseAction] = Field(default_factory=list)
     pipeline_duration_ms: int = 0
     error: Optional[str] = None
+    # Dual-source corroboration (Q4 doctrine, project_dual_suricata_sync.md):
+    # set when both Suricata sources are configured and the alert was
+    # tagged by the DualSourceCorrelator. None for single-source runs.
+    source_corroboration: Optional["SourceCorroboration"] = None
+    # Output of the DivergenceInvestigator. Only populated when
+    # ``source_corroboration`` is DIVERGENCE_A or DIVERGENCE_B; None
+    # otherwise. Captures the six fail-safe checks that drive the
+    # verdict bump (Q3 doctrine).
+    divergence_findings: Optional["DivergenceFindings"] = None
+    # Pre-bump verdict — recorded only when the divergence verdict
+    # bumper actually changed the Analyzer's verdict (Q3 ladder
+    # BENIGN -> SUSPICIOUS -> CONFIRMED). Lets the audit trail
+    # distinguish "Opus said benign, divergence pushed to suspicious"
+    # from "Opus said suspicious natively". None when no bump
+    # applied (single-source runs, MATCH_CONFIRMED, benign-explained
+    # divergences, or already-CONFIRMED verdicts).
+    verdict_pre_bump: Optional[ThreatVerdict] = None
 
 
 # ---------------------------------------------------------------------------

@@ -320,6 +320,42 @@ class Pipeline:
         self._conn_buffer = NetConnectionsBuffer()
         attach_buffer_to_analyzer(self._forensics, self._conn_buffer)
 
+        # DivergenceInvestigator (Step 10 of project_dual_suricata_sync.md).
+        # Built unconditionally — the investigator is fail-safe and the
+        # cost of construction is a few hundred bytes; if the alert is
+        # not divergent (most common case in single-source mode), the
+        # investigator short-circuits in O(1) and returns an empty
+        # DivergenceFindings(). The Bumper then refuses to bump on the
+        # empty findings (checks_run=[] guard).
+        #
+        # The ``suricata_process`` parameter is None at this layer —
+        # Pipeline does not own the SuricataProcess handle (that lives
+        # in ui/app.py's LocalSuricataAgent). The "is Suricata alive?"
+        # check therefore returns "unknown" rather than "dead", which
+        # is the conservative default: the bumper will still escalate
+        # on the unexplained branch, just not specifically on the
+        # "Suricata local dead" branch. Wiring the live process handle
+        # through to Pipeline is a follow-up improvement; in the
+        # meantime the dual-source detection still works end-to-end.
+        from wardsoar.pc.divergence_investigator import DivergenceInvestigator
+
+        suricata_local_cfg = getattr(config, "suricata_local", None)
+        local_subnets_cidr_raw = (
+            suricata_local_cfg.get("local_subnets_cidr", [])
+            if isinstance(suricata_local_cfg, dict)
+            else []
+        )
+        local_subnets_cidr = (
+            [str(s) for s in local_subnets_cidr_raw]
+            if isinstance(local_subnets_cidr_raw, list)
+            else []
+        )
+        self._divergence_investigator = DivergenceInvestigator(
+            suricata_process=None,
+            netconns_buffer=self._conn_buffer,
+            local_subnets_cidr=local_subnets_cidr,
+        )
+
         # PID-keyed cache for risk scoring (v0.20.3). Amortises the
         # ~100 ms cost of scoring a process across bursts of alerts
         # from the same PID — a 50-alert Cloudflare STUN burst costs
@@ -837,6 +873,12 @@ class Pipeline:
         import time
         import uuid
 
+        from wardsoar.core.divergence_verdict_bumper import bump_verdict
+        from wardsoar.core.models import (
+            DivergenceFindings as _DivergenceFindings,
+            SourceCorroboration as _SourceCorroboration,
+        )
+
         start_time = time.monotonic()
         self._metrics.increment("alerts_total")
         logger.info(
@@ -845,6 +887,56 @@ class Pipeline:
             alert.dest_ip,
             alert.alert_signature_id,
         )
+
+        # Step 0.5 — DivergenceInvestigator (Q3 / Q4 doctrine).
+        # Reads the ``source_corroboration`` tag injected by the
+        # DualSourceCorrelator into the EVE event. Only runs when
+        # the corroboration is DIVERGENCE_A or DIVERGENCE_B; for any
+        # other value (None, SINGLE_SOURCE, MATCH_CONFIRMED,
+        # *_PENDING) the investigator short-circuits and returns
+        # default findings (checks_run=[]) which the Bumper will
+        # ignore. Fail-safe: every internal check catches its own
+        # errors so the pipeline cannot stall here.
+        corroboration: Optional[_SourceCorroboration] = None
+        divergence_findings: Optional[_DivergenceFindings] = None
+        secondary_event: Optional[dict[str, Any]] = None
+        try:
+            raw_corroboration = alert.raw_event.get("source_corroboration")
+            if isinstance(raw_corroboration, str):
+                try:
+                    corroboration = _SourceCorroboration(raw_corroboration)
+                except ValueError:
+                    logger.debug(
+                        "[pipeline] Step 0.5: unknown source_corroboration value %r — ignored",
+                        raw_corroboration,
+                    )
+                    corroboration = None
+            elif isinstance(raw_corroboration, _SourceCorroboration):
+                corroboration = raw_corroboration
+
+            secondary_raw = alert.raw_event.get("secondary_event")
+            if isinstance(secondary_raw, dict):
+                secondary_event = secondary_raw
+
+            if corroboration in (
+                _SourceCorroboration.DIVERGENCE_A,
+                _SourceCorroboration.DIVERGENCE_B,
+            ):
+                divergence_findings = await self._divergence_investigator.investigate(
+                    event=alert.raw_event,
+                    corroboration=corroboration,
+                    secondary_event=secondary_event,
+                )
+                logger.info(
+                    "[pipeline] Step 0.5: divergence investigated "
+                    "(corroboration=%s, explanation=%s, is_explained=%s)",
+                    corroboration.value,
+                    divergence_findings.explanation,
+                    divergence_findings.is_explained,
+                )
+        except Exception:  # noqa: BLE001 — investigation must never break the pipeline
+            logger.debug("[pipeline] Step 0.5: investigator raised", exc_info=True)
+            divergence_findings = None
 
         # Step 0 — early process attribution + risk scoring.
         # Runs BEFORE the filter so a malicious local process can
@@ -1007,6 +1099,32 @@ class Pipeline:
                 analysis.confidence,
             )
 
+        # Step 9.5 — DivergenceVerdictBumper (Q3 doctrine).
+        # When the dual-source correlator and the investigator have
+        # produced divergence findings, apply the verdict bump:
+        #   * unexplained divergence       -> +1 cran on the ladder
+        #   * Suricata local dead          -> +1 cran on the ladder
+        #   * loopback / VPN / LAN-only    -> verdict unchanged
+        # Pure helper, no I/O. The bumper logs INFO on every actual
+        # bump; we additionally record the pre-bump verdict on the
+        # DecisionRecord so the audit trail shows both values.
+        verdict_pre_bump: Optional[ThreatVerdict] = None
+        if divergence_findings is not None and analysis is not None:
+            try:
+                bumped = bump_verdict(analysis.verdict, divergence_findings)
+                if bumped != analysis.verdict:
+                    logger.info(
+                        "[pipeline] Step 9.5: verdict bumped %s -> %s "
+                        "(divergence explanation=%s)",
+                        analysis.verdict.value,
+                        bumped.value,
+                        divergence_findings.explanation,
+                    )
+                    verdict_pre_bump = analysis.verdict
+                    analysis = analysis.model_copy(update={"verdict": bumped})
+            except Exception:  # noqa: BLE001 — bumper must never break the pipeline
+                logger.debug("[pipeline] Step 9.5: bumper raised", exc_info=True)
+
         # Build decision record
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
         record = DecisionRecord(
@@ -1018,6 +1136,9 @@ class Pipeline:
             virustotal_results=vt_results,
             analysis=analysis,
             pipeline_duration_ms=elapsed_ms,
+            source_corroboration=corroboration,
+            divergence_findings=divergence_findings,
+            verdict_pre_bump=verdict_pre_bump,
         )
 
         # Step 11: Responder — always consulted from v0.5.5 onward.
