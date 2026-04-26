@@ -18,6 +18,109 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.23.0 — 2026-04-26
+
+**Dual-Suricata sync** — WardSOAR now correlates two independent
+Suricata sources (external Netgate / VirusSniff + on-PC local
+Suricata) into a single tagged stream, investigates divergences with
+six fail-safe parallel checks, and escalates the verdict when the
+divergence is unexplained or the local IDS was found dead during
+the event window.
+
+### What changes for the operator
+
+The first-run wizard now exposes the local-Suricata setup in two
+new pages (skipped when the operator did not select that source in
+the questionnaire). The Activity tab tags every divergent alert
+with one of three visual tiers (info blue / warning orange / alert
+red) based on the explanation. The Dashboard reveals a "Divergences
+24 h" card on the first divergence — counter shows only
+*unexplained-class* divergences (unexplained + suricata_local_dead);
+benign-explained ones (loopback / VPN / LAN-only) are recorded in
+the rolling deque for future audit panels but kept out of the
+headline.
+
+### Doctrine reference
+
+`project_dual_suricata_sync.md` — Q1-Q4 verrouillé 2026-04-26.
+
+- **Q1** — reconciliation window 120 s default, band [30, 180],
+  buffer NetConnections 240 s.
+- **Q2** — six checks parallèles via `asyncio.gather`: snapshot,
+  Sysmon, Suricata-alive, loopback, VPN, LAN-only. Each check is
+  fail-safe (timeout / exception → empty result, others continue).
+- **Q3** — verdict bumper β nuancé sur le ladder
+  `BENIGN -> SUSPICIOUS -> CONFIRMED`. Bump triggers : `unexplained`
+  ou `suricata_local_dead`. Loopback / VPN / LAN-only laissent le
+  verdict intact.
+- **Q4** — `DualSourceCorrelator` instancié *seulement* quand deux
+  sources sont configurées (configs 3 et 5 du
+  SourcesQuestionnaire). Les opérateurs Netgate-only ou local-only
+  ne paient rien.
+
+### Architecture
+
+ARCHITECTURE.md §5.1 réécrite « At least one alert source must be
+accessible » (relaxation de l'ancienne règle « Suricata mandatory »).
+Le runtime accepte trois topologies :
+
+1. Netgate seul (legacy, défaut historique).
+2. Local Suricata seul (standalone-PC, Windows Firewall blocking).
+3. Netgate + Local (dual-source corrélé, blocage périmètre).
+
+Plus deux topologies VirusSniff (futures, brique 7).
+
+### New modules
+
+- `wardsoar.pc.installer_helpers` — Npcap + Suricata
+  download / Authenticode verify / launch (license-clean,
+  jamais bundlé).
+- `wardsoar.pc.local_suricata` — `SuricataProcess` (lifecycle async),
+  config gen, interface enumeration via psutil.
+- `wardsoar.pc.local_suricata_agent.LocalSuricataAgent` —
+  `RemoteAgent` Protocol, composition `SuricataProcess` + Windows
+  Firewall blocker.
+- `wardsoar.pc.divergence_investigator.DivergenceInvestigator` —
+  CRITICAL module, six checks fail-safe parallèles.
+- `wardsoar.core.divergence_verdict_bumper.bump_verdict` — pure
+  helper, ladder Q3.
+- `wardsoar.core.remote_agents.dual_source_correlator.DualSourceCorrelator`
+  — fan-in 2 streams → 1, state machine avec sweeper
+  d'expiration de fenêtre.
+- `models.SourceCorroboration` enum (6 états) +
+  `models.DivergenceFindings` Pydantic.
+- `DecisionRecord` étendu : `source_corroboration`,
+  `divergence_findings`, `verdict_pre_bump` (tous Optional, défauts
+  None — backward-compat).
+
+### Pipeline stages
+
+- **Stage 0.5** — `DivergenceInvestigator` lit
+  `alert.raw_event.source_corroboration`, ne s'exécute que pour
+  DIVERGENCE_A / DIVERGENCE_B. Failure swallowed.
+- **Stage 9.5** — `bump_verdict()` post-Analyzer, before Responder.
+  Pré-bump verdict recorded sur le DecisionRecord.
+
+### Coverage
+
+- 128 nouveaux tests :
+  `DivergenceInvestigator` 26, `DivergenceVerdictBumper` 43,
+  DualSourceCorrelator wiring 13, pipeline stages 0.5 + 9.5 19,
+  Dashboard widget 14, wizard pages 13. Plus tests inclus avec
+  les modules.
+- Suite complète : **1762 passed**, 2 skipped, 0 régressions
+  (était 1517 en v0.22.24, soit +245 net — incluant les tests
+  inclus dans les modules + les fixtures du dual-source).
+- Quality gates : black, ruff, mypy --strict, bandit -ll
+  (0 Medium / 0 High), pip-audit — tout vert.
+
+### Artefact
+
+- `WardSOAR_0.23.0.msi` (95.9 MB, 100,571,380 bytes)
+- SHA-256: `4a1566352f7ff9308746b019985fd8600655049a1d4d66f0b232521562fb1460`
+
+---
+
 ## v0.22.24 — 2026-04-26
 
 `process_risk` scorer: smaller false-positive rate on legitimate
