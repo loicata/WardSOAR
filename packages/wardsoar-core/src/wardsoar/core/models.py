@@ -234,5 +234,131 @@ class DecisionRecord(BaseModel):
     error: Optional[str] = None
 
 
+# ---------------------------------------------------------------------------
+# Dual-Suricata source corroboration (configs 3 and 5)
+# ---------------------------------------------------------------------------
+
+
+class SourceCorroboration(str, Enum):
+    """Status of an alert relative to dual-Suricata source comparison.
+
+    Tagged on every alert by the :class:`DualSourceCorrelator` (see
+    ``project_dual_suricata_sync.md`` memo for the doctrine). Mono-source
+    configurations stay on :data:`SINGLE_SOURCE`; dual-source configs
+    transition the tag through pending → confirmed/diverged states as
+    the reconciliation window closes.
+
+    Lifecycle:
+        ``MATCH_PENDING``      → ``MATCH_CONFIRMED``  (both sources saw it)
+                              \\→ ``DIVERGENCE_A``    (window expired, only external)
+        ``DIVERGENCE_PENDING`` → ``MATCH_CONFIRMED``  (other source caught up)
+                              \\→ ``DIVERGENCE_B``    (window expired, only local)
+
+    The pipeline emits a verdict on the first sighting (with the
+    ``_PENDING`` tag); the tag is overwritten when the window closes.
+    Downstream consumers must therefore tolerate alerts whose tag
+    changes out-of-band.
+    """
+
+    SINGLE_SOURCE = "single_source"
+    """Only one Suricata source is configured. No corroboration possible."""
+
+    MATCH_PENDING = "match_pending"
+    """External source saw it; we're within the reconciliation window
+    waiting for the local source to confirm."""
+
+    DIVERGENCE_PENDING = "divergence_pending"
+    """Local source saw it; we're within the reconciliation window
+    waiting for the external source to confirm."""
+
+    MATCH_CONFIRMED = "match_confirmed"
+    """Both sources observed the same flow within the reconciliation
+    window. Local process context (PID, Sysmon) enriches the verdict."""
+
+    DIVERGENCE_A = "divergence_a"
+    """Reconciliation window expired and only the external source
+    saw the flow. May indicate LAN-only traffic, a stopped local
+    Suricata, or — alarmingly — traffic the local Suricata cannot see
+    (rootkit cloaking). Triggers :class:`DivergenceFindings` analysis."""
+
+    DIVERGENCE_B = "divergence_b"
+    """Reconciliation window expired and only the local source saw
+    the flow. Often legitimate (loopback, VPN-terminated-on-PC,
+    LAN-internal traffic) but warrants investigation to confirm the
+    external Suricata is not silently dropping events."""
+
+
+class DivergenceFindings(BaseModel):
+    """Output of the ``DivergenceInvestigator`` for a divergent alert.
+
+    Attached to alerts whose :class:`SourceCorroboration` resolved to
+    :data:`SourceCorroboration.DIVERGENCE_A` or
+    :data:`SourceCorroboration.DIVERGENCE_B`. Captures the result of
+    six fail-safe checks run in parallel, plus a synthesised
+    ``explanation`` string that drives the verdict-bumping logic
+    (Q3 doctrine: bump verdict only when ``is_explained=False`` or
+    ``explanation="suricata_local_dead"``).
+
+    All checks are best-effort: a failed check returns its default
+    (``False`` / ``"unknown"`` / ``[]``) and the others continue.
+    The investigator never raises to the pipeline.
+
+    See ``project_dual_suricata_sync.md`` Q2 for the precise check
+    semantics and ``project_dual_suricata_sync.md`` Q3 for how the
+    fields drive the verdict bumping decision.
+    """
+
+    checks_run: list[str] = Field(default_factory=list)
+    """Names of checks that were attempted: ``snapshot``, ``sysmon``,
+    ``suricata_alive``, ``loopback``, ``vpn``, ``lan_only``. A check
+    that errored or skipped (e.g. Sysmon not installed) is *not*
+    listed here — the field reports successful runs only."""
+
+    is_explained: bool = False
+    """True when at least one check found a topological reason that
+    explains the divergence (loopback, VPN, LAN-only) or a known
+    failure mode (suricata_local_dead). False means the divergence
+    is unexplained — drives the verdict bump."""
+
+    explanation: str = "unexplained"
+    """Short token describing the explanation. Possible values:
+    ``loopback_traffic``, ``vpn_traffic``, ``lan_only_traffic``,
+    ``suricata_local_dead``, ``unexplained``. Only the first
+    matching cause is recorded — the investigator stops scoring
+    once it has a positive answer."""
+
+    snapshot_summary: dict[str, Any] = Field(default_factory=dict)
+    """Output of check (a). Holds the PIDs and connections seen in
+    the ``NetConnectionsBuffer`` at the time of the event. Empty
+    dict when the snapshot was unavailable (process exited, buffer
+    not yet primed)."""
+
+    sysmon_correlation: list[dict[str, Any]] = Field(default_factory=list)
+    """Output of check (b). Up to 100 Sysmon events (Process Create
+    + Network Connection) within ±15 s of the alert timestamp.
+    Empty list when Sysmon is not installed, the query timed out,
+    or no correlated events were found."""
+
+    suricata_local_state: str = "unknown"
+    """Output of check (c). One of ``running``, ``dead``, ``unknown``.
+    ``dead`` means the Suricata process is not running — a
+    high-signal divergence cause that bumps the verdict."""
+
+    is_loopback: bool = False
+    """Output of check (d). True when both ``src_ip`` and ``dest_ip``
+    resolve to a loopback address (``127.0.0.1``, ``::1``) or to
+    a local interface IP."""
+
+    is_vpn: bool = False
+    """Output of check (e). True when the host has at least one
+    active VPN-style interface (TUN/TAP/WireGuard/OpenVPN)."""
+
+    is_lan_only: bool = False
+    """Output of check (f). True when both ``src_ip`` and ``dest_ip``
+    are within RFC1918 LAN ranges and the WAN is on a different
+    subnet (no transit through the WAN, hence the external Suricata
+    on the WAN side never sees the flow)."""
+
+
 # Fix forward reference for NetworkContext
 NetworkContext.model_rebuild()

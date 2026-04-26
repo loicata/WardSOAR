@@ -12,10 +12,12 @@ from pydantic import ValidationError
 from wardsoar.core.models import (
     BlockAction,
     DecisionRecord,
+    DivergenceFindings,
     ForensicResult,
     IPReputation,
     NetworkContext,
     ResponseAction,
+    SourceCorroboration,
     SuricataAlert,
     SuricataAlertSeverity,
     SysmonEvent,
@@ -419,3 +421,129 @@ class TestDecisionRecord:
         assert restored.analysis.verdict == ThreatVerdict.CONFIRMED
         assert len(restored.actions_taken) == 1
         assert restored.actions_taken[0].success is True
+
+
+# ---------------------------------------------------------------------------
+# Dual-Suricata corroboration (configs 3 and 5)
+# ---------------------------------------------------------------------------
+
+
+class TestSourceCorroboration:
+    """The 6-state enum tagging dual-source alerts.
+
+    See ``project_dual_suricata_sync.md`` for the doctrine. The
+    invariants below pin the lifecycle so a future refactor cannot
+    accidentally rename / reorder values that downstream code parses
+    by string match.
+    """
+
+    def test_string_values_are_stable(self) -> None:
+        """Downstream code (logs, JSON, UI tags) parses these strings.
+        Renaming them is a breaking change."""
+        assert SourceCorroboration.SINGLE_SOURCE.value == "single_source"
+        assert SourceCorroboration.MATCH_PENDING.value == "match_pending"
+        assert SourceCorroboration.DIVERGENCE_PENDING.value == "divergence_pending"
+        assert SourceCorroboration.MATCH_CONFIRMED.value == "match_confirmed"
+        assert SourceCorroboration.DIVERGENCE_A.value == "divergence_a"
+        assert SourceCorroboration.DIVERGENCE_B.value == "divergence_b"
+
+    def test_six_states_exhaustively(self) -> None:
+        """All six lifecycle states are exposed — no more, no less."""
+        states = {member.value for member in SourceCorroboration}
+        assert states == {
+            "single_source",
+            "match_pending",
+            "divergence_pending",
+            "match_confirmed",
+            "divergence_a",
+            "divergence_b",
+        }
+
+    def test_is_str_enum(self) -> None:
+        """The value is the string literal — important for JSON
+        serialisation and string comparisons in log filters."""
+        assert SourceCorroboration.MATCH_CONFIRMED == "match_confirmed"
+        assert isinstance(SourceCorroboration.MATCH_CONFIRMED.value, str)
+
+
+class TestDivergenceFindings:
+    """Output of the ``DivergenceInvestigator`` for divergent alerts."""
+
+    def test_construction_with_all_defaults(self) -> None:
+        """The dataclass is fully default-constructible — useful when
+        the investigator skips a divergent event (e.g. all checks
+        timed out) and we still need an attached object."""
+        findings = DivergenceFindings()
+        assert findings.checks_run == []
+        assert findings.is_explained is False
+        assert findings.explanation == "unexplained"
+        assert findings.snapshot_summary == {}
+        assert findings.sysmon_correlation == []
+        assert findings.suricata_local_state == "unknown"
+        assert findings.is_loopback is False
+        assert findings.is_vpn is False
+        assert findings.is_lan_only is False
+
+    def test_construction_with_explanation_loopback(self) -> None:
+        """Loopback traffic is the canonical "explained" divergence —
+        local Suricata sees it, external can't (by topology). Verdict
+        bumper must NOT bump these."""
+        findings = DivergenceFindings(
+            checks_run=["loopback", "snapshot"],
+            is_explained=True,
+            explanation="loopback_traffic",
+            is_loopback=True,
+        )
+        assert findings.is_explained is True
+        assert findings.explanation == "loopback_traffic"
+        assert findings.is_loopback is True
+
+    def test_construction_with_explanation_suricata_local_dead(self) -> None:
+        """When local Suricata is dead, the explanation is "explained"
+        in the sense that we know why — but the verdict bumper STILL
+        bumps because a dead local Suricata is a high-signal anomaly
+        (the operator must notice and react)."""
+        findings = DivergenceFindings(
+            checks_run=["suricata_alive"],
+            is_explained=True,
+            explanation="suricata_local_dead",
+            suricata_local_state="dead",
+        )
+        assert findings.is_explained is True
+        assert findings.explanation == "suricata_local_dead"
+        assert findings.suricata_local_state == "dead"
+
+    def test_construction_unexplained(self) -> None:
+        """Unexplained divergence — every check ran but no
+        topological / known-failure cause was found. This is the case
+        that bumps the verdict in the doctrine (Q3 β nuanced)."""
+        findings = DivergenceFindings(
+            checks_run=["snapshot", "sysmon", "suricata_alive", "loopback", "vpn", "lan_only"],
+            is_explained=False,
+            explanation="unexplained",
+        )
+        assert findings.is_explained is False
+        assert findings.explanation == "unexplained"
+
+    def test_serialization_roundtrip(self) -> None:
+        """Findings must survive JSON serialisation for the forensic
+        log + dashboard widget filtering."""
+        original = DivergenceFindings(
+            checks_run=["snapshot", "loopback"],
+            is_explained=True,
+            explanation="loopback_traffic",
+            snapshot_summary={"pids": [1234, 5678]},
+            sysmon_correlation=[{"event_id": 3, "pid": 1234}],
+            suricata_local_state="running",
+            is_loopback=True,
+        )
+        json_str = original.model_dump_json()
+        restored = DivergenceFindings.model_validate_json(json_str)
+        assert restored == original
+
+    def test_default_explanation_token_matches_unexplained(self) -> None:
+        """The default ``"unexplained"`` token is what the verdict
+        bumper triggers on. Renaming it to something else breaks the
+        bumper. Pin the literal so renames are caught here."""
+        findings = DivergenceFindings()
+        assert findings.explanation == "unexplained"

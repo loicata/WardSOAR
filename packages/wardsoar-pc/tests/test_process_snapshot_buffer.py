@@ -12,6 +12,7 @@ from wardsoar.pc.process_snapshot_buffer import (
     NetConnectionsBuffer,
     Snapshot,
     _ConnTuple,
+    _RETENTION_SECONDS,
     _conn_tuple_matches,
 )
 
@@ -230,3 +231,28 @@ class TestLifecycle:
         """Deque max length = retention / interval + 1."""
         buffer = NetConnectionsBuffer(interval_seconds=1.0, retention_seconds=5.0)
         assert buffer._snapshots.maxlen == 6
+
+    def test_default_retention_covers_dual_suricata_window(self) -> None:
+        """Default retention must be >= dual_suricata reconciliation
+        window (120 s default) + investigator margin.
+
+        Doctrine (project_dual_suricata_sync.md Q1):
+        when a divergence is declared at window expiration (T+120s),
+        the DivergenceInvestigator reaches back to T+0 to snapshot
+        what the host was doing — the buffer must still hold that
+        history. Pinning this invariant in a test catches any future
+        regression where someone shrinks the buffer without
+        considering the correlator dependency.
+        """
+        # Configurable upper bound for the reconciliation window
+        # documented in the memo: 180 s.
+        max_reconciliation_window_s = 180.0
+        # Investigator + log pipeline margin: another 60 s is
+        # comfortable.
+        investigator_margin_s = 60.0
+        assert _RETENTION_SECONDS >= max_reconciliation_window_s + investigator_margin_s, (
+            f"Default retention {_RETENTION_SECONDS}s is too short to cover "
+            f"the dual_suricata reconciliation window ({max_reconciliation_window_s}s) "
+            f"plus investigator margin ({investigator_margin_s}s). See "
+            f"project_dual_suricata_sync.md Q1."
+        )

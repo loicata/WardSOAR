@@ -37,11 +37,23 @@ logger = logging.getLogger("ward_soar.process_snapshot_buffer")
 #: short TCP handshakes), cheap enough to run indefinitely.
 _SNAPSHOT_INTERVAL = 2.0
 
-#: How much history we keep. 60 seconds covers the delay between a
-#: Suricata alert hitting ``eve.json`` on the Netgate and the
-#: forensic module reading it on the PC side (typically <2 s but we
-#: want a comfortable margin for overloaded pipelines).
-_RETENTION_SECONDS = 60.0
+#: How much history we keep. 240 s covers two distinct delay budgets:
+#:
+#: 1. The base delay between a Suricata alert hitting ``eve.json`` on
+#:    the Netgate and the forensic module reading it on the PC side
+#:    (typically <2 s, but the pipeline can be overloaded).
+#: 2. The :class:`DualSourceCorrelator` reconciliation window
+#:    (default 120 s; up to 180 s configurable via
+#:    ``dual_suricata.reconciliation_window_s``). When a divergence
+#:    is declared at window expiration, the
+#:    :class:`DivergenceInvestigator` reaches back to the alert
+#:    timestamp to snapshot what the host was doing — the buffer
+#:    must still hold that history.
+#:
+#: 240 s = 120 s window + 120 s margin for the investigator + log
+#: pipeline. The memory cost is ~30-40 MB on a host with ~thousand
+#: sockets/s, which is negligible vs. the rest of the pipeline.
+_RETENTION_SECONDS = 240.0
 
 
 @dataclass(frozen=True)
