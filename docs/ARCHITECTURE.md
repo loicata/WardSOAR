@@ -178,19 +178,53 @@ never crashes on a single bad input.
 Each entry: **what** was decided, **why**, **alternatives considered**,
 and the **date** so the rationale is traceable over time.
 
-### 5.1 Local Suricata is mandatory on WardSOAR PC *(2026-04-24)*
+### 5.1 At least one alert source must be accessible *(2026-04-24, revised 2026-04-26)*
 
-**Decision**: WardSOAR PC ships with local Suricata installation
-enforced at first-run wizard. The operator cannot start WardSOAR
-without Suricata being installed and running.
+**Decision**: WardSOAR PC requires at least *one* operational
+Suricata source — either the local on-PC Suricata, an external
+Netgate / pfSense running Suricata, or both. The first-run
+``SourcesQuestionnaire`` enforces the "≥1 source" invariant; the
+runtime falls back to a no-op enforcement agent if a hand-edited
+config violates it.
 
-**Rationale**:
-- Maximum detection, including traffic that never reaches the Netgate
-  (loopback, VPN-terminated on PC, traffic after the firewall is
-  bypassed).
-- Process context: local Suricata alerts can be correlated to PIDs,
-  something the Netgate never sees.
-- Defence in depth: a compromised router doesn't silence detection.
+When **both** sources are configured (configs 3 and 5 of the
+questionnaire — typically PC + Netgate + local Suricata, or
+PC + VirusSniff + local Suricata), the streams are fanned in by
+:class:`DualSourceCorrelator` and tagged with a
+:class:`SourceCorroboration` value:
+
+* ``MATCH_CONFIRMED`` — both sources observed the flow within the
+  reconciliation window (default 120 s, band [30, 180]). Local
+  process context enriches the verdict.
+* ``DIVERGENCE_A`` — only the external source saw the flow. Often
+  benign topology (loopback / VPN / LAN-only), occasionally the
+  local Suricata is dead, and worst-case a rootkit is hiding
+  traffic from the local agent.
+* ``DIVERGENCE_B`` — only the local source saw it. Same set of
+  benign explanations; warrants investigation to confirm the
+  external Suricata is not silently dropping events.
+
+The :class:`DivergenceInvestigator` runs six fail-safe parallel
+checks (snapshot, Sysmon, Suricata-alive, loopback, VPN, LAN-only)
+on every divergence, and the :func:`bump_verdict` helper escalates
+the Analyzer verdict by one notch on the
+``BENIGN -> SUSPICIOUS -> CONFIRMED`` ladder when the divergence
+is unexplained or caused by a dead local Suricata. Benign-explained
+divergences (loopback / VPN / LAN-only) leave the verdict
+untouched. Full doctrine: ``project_dual_suricata_sync.md`` Q1-Q4.
+
+**Rationale for the "≥1 source" relaxation**:
+- The original "local Suricata mandatory" rule made every Netgate-
+  only operator install software they didn't need (Suricata + Npcap
+  on Windows = ~150 MB, plus the Npcap NPSL acceptance friction).
+- Local Suricata captures traffic the Netgate never sees (loopback,
+  VPN-terminated-on-PC), but that benefit only matters when the
+  operator's threat model includes those vectors. The questionnaire
+  surfaces the trade-off explicitly.
+- When **both** sources are configured, the dual-Suricata
+  correlation produces a higher-confidence verdict than either
+  source alone — the new architecture rewards operators who run
+  both without forcing it on those who can't.
 
 **Alternatives considered**:
 - Suricata optional, Netgate required: rejected because it made the
