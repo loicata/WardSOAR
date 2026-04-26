@@ -18,6 +18,85 @@ certutil -hashfile .\WardSOAR_X.Y.Z.msi SHA256
 
 ---
 
+## v0.22.24 — 2026-04-26
+
+`process_risk` scorer: smaller false-positive rate on legitimate
+unsigned binaries the operator installs themselves under
+`%LOCALAPPDATA%\Programs\` (Discord, VS Code, custom PyInstaller
+hobby tools, Electron apps that ship without a publisher signature).
+
+### Why this matters
+
+The previous heuristic was correct for malware (unsigned + user-writable
+path = high score) but produced systematic `suspicious` verdicts on
+benign user-mode installs. A long-running v0.22.23 session caught one
+such case in the wild — a personal GitHub-monitor utility scoring 55
+purely because it was unsigned and outside Program Files. The pattern
+is shared by every PyInstaller / Electron app installed without admin
+rights, and would gradually erode operator trust in the verdict.
+
+### Two complementary changes
+
+1. **Path category for `%LOCALAPPDATA%\Programs\`** — recognised as a
+   semi-trusted install location: applies a `-5` score delta with
+   signal "Runs from per-user installed-programs directory". Sits
+   between `Program Files` (-10, admin-installed) and `\Temp\` /
+   `\Downloads\` (+25, suspect). Conservative on purpose: a real drop
+   in the same directory still ends up `suspicious`, just slightly less
+   alarming. Option C below covers the remaining false-positives.
+
+2. **Operator-managed SHA-256 whitelist** — new module
+   `wardsoar.pc.trusted_local_binaries`. Reads
+   `%APPDATA%\WardSOAR\config\trusted_local_binaries.yaml` (mtime-cached,
+   thread-safe). When `scan_process` finds the binary's hash listed,
+   it short-circuits to `BENIGN` (score 0) before any Authenticode /
+   Defender / YARA / VT call. The semantics are explicit: *the
+   operator has verified this binary's provenance and accepts the
+   verdict*. Hash drift (binary swap on the same path) drops the
+   entry naturally.
+
+   File format:
+
+   ```yaml
+   trusted:
+     - sha256: "0123…"           # required, 64 lowercase hex (MUST be quoted)
+       path_hint: "C:/…"         # optional, human review only
+       notes: "Personal tool"    # optional
+       added: "2026-04-26"       # optional ISO date
+   ```
+
+### Coverage
+
+- New module: 16 tests (loader edge cases, mtime invalidation, YAML
+  pitfalls including the unquoted-numeric-int trap that drops a SHA
+  with a clear warning rather than misclassifying).
+- `process_risk`: 5 new scenarios covering the path category and the
+  whitelist short-circuit (with sentinel asserts that the helpers
+  Defender/YARA/VT are never reached).
+- Suite: **1517 tests passed**, 6 skipped (was 1501 in v0.22.23 — +16
+  net).
+- Quality gates: black, ruff, mypy --strict, bandit, pip-audit — all
+  green.
+
+### Files
+
+* `packages/wardsoar-pc/src/wardsoar/pc/process_risk.py`
+  — adds `_USER_PROGRAMS_PREFIXES` + branch in the path scoring,
+    adds the whitelist short-circuit at the top of `scan_process`.
+* `packages/wardsoar-pc/src/wardsoar/pc/trusted_local_binaries.py` (new)
+  — loader, mtime cache, `is_trusted()` lookup.
+* `packages/wardsoar-pc/tests/test_process_risk.py`
+  — `TestUserInstalledProgramsPath`, `TestTrustedLocalWhitelist`.
+* `packages/wardsoar-pc/tests/test_trusted_local_binaries.py` (new).
+
+### No MSI yet
+
+Tests + quality gates green, but no MSI built for v0.22.24 — minor
+behavioural patch, the v0.22.23 MSI in `dist/` is still the
+operator-facing artefact until the next packaged release.
+
+---
+
 ## v0.22.23 — 2026-04-25
 
 Architectural cleanup: **`wardsoar-core` is now strictly platform-agnostic
