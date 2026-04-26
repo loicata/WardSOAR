@@ -12,6 +12,7 @@ PySide6 + PyQt-Fluent-Widgets (Windows 11 Fluent Design):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -650,26 +651,40 @@ class WardApp:
 
             self._engine.start()
 
-            # Start agent-driven alert stream consumer if in SSH mode.
-            # Phase 3b.5: replaces the direct ``SshStreamer`` instantiation
-            # with a ``RemoteAgent`` whose ``stream_alerts()`` is consumed
-            # uniformly. Today only ``NetgateAgent`` is wired; a future
-            # ``VsAgent`` (Virus Sniff RPi) plugs in identically.
+            # Start agent-driven alert stream consumer based on the
+            # operator's ``sources`` choices (see SourcesQuestionnaire
+            # / Pipeline.__init__ for the matching server-side wiring).
+            #
+            # Decision tree:
+            #   sources.netgate=True            → NetgateAgent (SSH+tail)
+            #   sources.suricata_local=True     → LocalSuricataAgent
+            #                                     (local Suricata + WinFW)
+            #   neither                          → no consumer (file mode)
+            #
+            # Phase 3b.5 introduced the AgentStreamConsumer abstraction
+            # so any RemoteAgent's stream_alerts() can drive the
+            # pipeline. The dual-Suricata case (configs 3 / 5 — both
+            # netgate AND suricata_local) lands later via the
+            # DualSourceCorrelator (see project_dual_suricata_sync.md);
+            # for now the dual case picks the external source as base.
+            sources = getattr(config, "sources", {}) or {}
             self._stream_consumer: Optional[AgentStreamConsumer] = None
-            if watcher_mode == "ssh":
-                self._start_alert_stream_consumer(config, dashboard)
+            if sources.get("netgate", False) and watcher_mode == "ssh":
+                self._start_netgate_stream_consumer(config, dashboard)
+            elif sources.get("suricata_local", False):
+                self._start_local_suricata_stream_consumer(config, dashboard)
 
             logger.info("Engine worker started (mode: %s)", watcher_mode)
         except (FileNotFoundError, ValueError) as exc:
             logger.error("Failed to start engine: %s", exc)
 
-    def _start_alert_stream_consumer(self, config: Any, dashboard: Any) -> None:
-        """Start the agent-driven EVE event consumer for SSH-source mode.
+    def _start_netgate_stream_consumer(self, config: Any, dashboard: Any) -> None:
+        """Start the agent-driven EVE event consumer for the Netgate source.
 
         Builds a :class:`NetgateAgent` from the operator's config and
         spawns an :class:`AgentStreamConsumer` to feed parsed events
-        into ``EngineWorker.on_alert_event``. Reconnection is owned by
-        the agent (see :meth:`PfSenseSSH.stream_alerts`).
+        into ``EngineWorker.on_alert_event``. Reconnection is owned
+        by the agent (see :meth:`PfSenseSSH.stream_alerts`).
 
         Args:
             config: Application configuration.
@@ -708,6 +723,78 @@ class WardApp:
             "AgentStreamConsumer started: %s@%s (agent=NetgateAgent)",
             ssh_user,
             pfsense_ip,
+        )
+
+    def _start_local_suricata_stream_consumer(self, config: Any, dashboard: Any) -> None:
+        """Start the agent-driven EVE event consumer for local Suricata.
+
+        Builds a :class:`LocalSuricataAgent` (composing
+        :class:`SuricataProcess` for lifecycle + :class:`WindowsFirewallBlocker`
+        for enforcement), spawns Suricata via the agent's
+        :meth:`startup`, then feeds the eve.json stream into
+        ``EngineWorker.on_alert_event`` via :class:`AgentStreamConsumer`.
+
+        The agent is also added to the dashboard's status surface so
+        the operator sees Suricata up / down / stale states next to
+        the SSH banner used for the Netgate.
+
+        Args:
+            config: Application configuration.
+            dashboard: Dashboard view for status updates.
+        """
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.pc.local_suricata import (
+            SuricataProcess,
+            find_suricata_install_dir,
+        )
+        from wardsoar.pc.local_suricata_agent import LocalSuricataAgent
+        from wardsoar.pc.windows_firewall import WindowsFirewallBlocker
+
+        suricata_dir = find_suricata_install_dir()
+        local_cfg = getattr(config, "suricata_local", {}) or {}
+        interface = local_cfg.get("interface", "") if isinstance(local_cfg, dict) else ""
+
+        if suricata_dir is None or not interface:
+            logger.warning(
+                "_start_local_suricata_stream_consumer: cannot start — "
+                "Suricata install dir=%s, interface=%r. Run the wizard "
+                "to complete the local Suricata setup. The pipeline "
+                "will continue with file-mode polling on the EVE path "
+                "in config.watcher (if any).",
+                suricata_dir,
+                interface,
+            )
+            return
+
+        log_dir = get_data_dir() / "suricata"
+        config_path = log_dir / "suricata.yaml"
+        process = SuricataProcess(
+            binary_path=suricata_dir / "suricata.exe",
+            config_path=config_path,
+            interface=interface,
+            log_dir=log_dir,
+        )
+        agent = LocalSuricataAgent(
+            process=process,
+            blocker=WindowsFirewallBlocker(),
+        )
+
+        # Spawn Suricata before the consumer starts tailing eve.json.
+        # The agent's startup is async, so schedule it on the engine
+        # loop and keep going — stream_alerts itself recovers from a
+        # missing file (Suricata still booting) so we don't need to
+        # wait for the spawn to complete here.
+        loop = asyncio.get_event_loop()
+        loop.create_task(agent.startup())
+
+        self._stream_consumer = AgentStreamConsumer(agent)
+        self._stream_consumer.event_received.connect(self._engine.on_alert_event)
+        self._stream_consumer.status_changed.connect(dashboard.add_ssh_status)
+        self._stream_consumer.start()
+        logger.info(
+            "AgentStreamConsumer started (agent=LocalSuricataAgent, " "interface=%s, eve=%s)",
+            interface,
+            process.eve_path,
         )
 
     def _on_alert_for_charts(self, alert_data: dict[str, Any]) -> None:
