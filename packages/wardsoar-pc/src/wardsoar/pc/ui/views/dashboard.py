@@ -1,17 +1,31 @@
-"""Dashboard tab — status banner + four time-scaled charts.
+"""Dashboard tab — status banner + compact Alerts chart + Sources/Destinations tables.
 
 Top banner shows the current operational status and the Ward mode
-toggle; below it sit four charts (Alerts, Verdicts, Blocked IPs, Top
-Source IPs) with a selectable time scale: Minute, Hour, Day, Week,
-Month, Year. The previous left-hand stats column (Alerts Today,
-Blocked Today, System Health) was retired — System Health migrated to
-the dedicated System tab.
+toggle. Below it sits a compact stacked-bar chart of alert verdicts
+over a selectable time scale (Minute, Hour, Day, Week, Month, Year),
+followed by two stacked tables — Sources and Destinations — that
+aggregate the alerts by ``src_ip`` and ``dest_ip`` respectively,
+enriched with ASN owner / country / CDN-or-SaaS tag from the
+``AsnEnricher`` and ``CdnAllowlist`` modules.
 
-Uses PyQt-Fluent-Widgets + PySide6 QtCharts.
+The pre-v0.25 layout had four charts (Alerts count, Verdicts,
+Blocked IPs, Top Source IPs); three were retired because:
+
+* Alerts (count) duplicated Verdicts which already shows the breakdown.
+* Blocked IPs always reads zero in ``dry_run=True`` and is otherwise
+  redundant with the red bar of the Verdicts chart.
+* Top Source IPs was self-referential — the operator's own PC
+  dominated the ranking 90 % of the time. The Sources table below
+  surfaces the same data but enriched with Owner/Country/Tag, which
+  changes the lecture (e.g. ``192.168.2.100`` is now visibly tagged
+  ``[lan]``, the operator-self-reference is one tag away).
+
+Uses PyQt-Fluent-Widgets + PySide6 QtCharts + QTableWidget.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -19,26 +33,28 @@ from typing import Any, Optional
 
 from PySide6.QtCharts import (
     QBarCategoryAxis,
-    QBarSeries,
-    QBarSet,
     QChart,
     QChartView,
     QStackedBarSeries,
+    QBarSet,
     QValueAxis,
 )
 from PySide6.QtCore import QMargins, Qt, Signal
 from PySide6.QtGui import QColor, QCursor, QPainter
 from PySide6.QtWidgets import (
-    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
+    CaptionLabel,
     MessageBox,
     PushButton,
     SimpleCardWidget,
     SubtitleLabel,
+    TableWidget,
 )
 
 logger = logging.getLogger("ward_soar.ui.dashboard")
@@ -372,48 +388,69 @@ class DashboardView(QWidget):
         self._update_scale_buttons()
         right_side.addLayout(scale_bar)
 
-        # Charts grid (2x2)
-        charts_widget = QWidget()
-        charts_grid = QGridLayout(charts_widget)
-        charts_grid.setSpacing(12)
-        charts_grid.setContentsMargins(0, 0, 0, 0)
+        # Alert data: list of (timestamp, src_ip, dest_ip, verdict, blocked).
+        # ``dest_ip`` was added in v0.25 so the Destinations table can
+        # group the same record set by destination — the previous tuple
+        # only carried ``src_ip`` because the four charts at the time
+        # ranked sources only.
+        self._alert_records: list[tuple[datetime, str, str, str, bool]] = []
+        self._src_counts: dict[str, int] = defaultdict(int)
+        self._dest_counts: dict[str, int] = defaultdict(int)
 
-        # Alert data: list of (timestamp, src_ip, verdict, blocked)
-        self._alert_records: list[tuple[datetime, str, str, bool]] = []
-        self._ip_counts: dict[str, int] = defaultdict(int)
-
-        # Chart 1: Alerts
+        # --- Compact Alerts chart (verdicts stacked, ~140 px tall) ---
+        # Title is "Alerts (...)" — the underlying series is the same
+        # verdict-stacked bars as before, but the historical
+        # ``Alerts (count-only)`` chart has been retired since the
+        # stacked one already carries the total via the bar height.
         self._alerts_chart = _create_dark_chart("Alerts (7 j)")
-        self._alerts_chart.legend().setVisible(False)
         self._alerts_view = QChartView(self._alerts_chart)
         self._alerts_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self._alerts_view.setFixedHeight(180)
         self._build_alerts_chart()
-        charts_grid.addWidget(self._alerts_view, 0, 0)
+        right_side.addWidget(self._alerts_view)
 
-        # Chart 2: Verdicts (stacked)
-        self._verdicts_chart = _create_dark_chart("Verdicts (7 j)")
-        self._verdicts_view = QChartView(self._verdicts_chart)
-        self._verdicts_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._build_verdicts_chart()
-        charts_grid.addWidget(self._verdicts_view, 0, 1)
+        # --- Sources table (full width, stretch=1) ---
+        self._sources_table = self._build_ip_table(("IP", "Alerts", "Owner", "Country", "Tag"))
+        self._sources_caption_label = CaptionLabel("Sources (7 j)")
+        sources_card = SimpleCardWidget()
+        sources_layout = QVBoxLayout(sources_card)
+        sources_layout.setContentsMargins(16, 12, 16, 12)
+        sources_layout.addWidget(self._sources_caption_label)
+        sources_layout.addWidget(self._sources_table)
+        right_side.addWidget(sources_card, stretch=1)
 
-        # Chart 3: Blocked IPs
-        self._blocked_chart = _create_dark_chart("Blocked IPs (7 j)")
-        self._blocked_chart.legend().setVisible(False)
-        self._blocked_view = QChartView(self._blocked_chart)
-        self._blocked_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._build_blocked_chart()
-        charts_grid.addWidget(self._blocked_view, 1, 0)
+        # --- Destinations table (full width, stretch=1) ---
+        self._destinations_table = self._build_ip_table(("IP", "Alerts", "Owner", "Country", "Tag"))
+        self._destinations_caption_label = CaptionLabel("Destinations (7 j)")
+        destinations_card = SimpleCardWidget()
+        destinations_layout = QVBoxLayout(destinations_card)
+        destinations_layout.setContentsMargins(16, 12, 16, 12)
+        destinations_layout.addWidget(self._destinations_caption_label)
+        destinations_layout.addWidget(self._destinations_table)
+        right_side.addWidget(destinations_card, stretch=1)
 
-        # Chart 4: Top Source IPs
-        self._top_ips_chart = _create_dark_chart("Top Source IPs (7 j)")
-        self._top_ips_chart.legend().setVisible(False)
-        self._top_ips_view = QChartView(self._top_ips_chart)
-        self._top_ips_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        charts_grid.addWidget(self._top_ips_view, 1, 1)
-
-        right_side.addWidget(charts_widget, stretch=1)
         layout.addLayout(right_side, stretch=1)
+
+        # ASN enricher — initialised lazily because it touches the
+        # SQLite cache file that lives in the user's data directory.
+        # Lookups are cache-only (sync, fast) — uncached IPs render
+        # as "—" so the UI stays responsive. The pipeline's
+        # ``alert_enrichment`` populates the cache for every alert
+        # that passes through, so by the time an alert reaches the
+        # Dashboard its IPs are warm.
+        self._asn_enricher: Optional[Any] = None
+        self._cdn_allowlist: Optional[Any] = None
+        try:
+            from wardsoar.core.asn_enricher import AsnEnricher
+            from wardsoar.core.cdn_allowlist import CdnAllowlist
+            from wardsoar.core.config import get_data_dir, get_bundle_dir
+
+            self._asn_enricher = AsnEnricher(cache_path=get_data_dir() / "data" / "asn_cache.db")
+            cdn_path = get_bundle_dir() / "config" / "cdn_allowlist.yaml"
+            if cdn_path.exists():
+                self._cdn_allowlist = CdnAllowlist(cdn_path)
+        except Exception as exc:  # noqa: BLE001 — UI must never crash on enrichment init
+            logger.debug("Dashboard enrichment init failed: %s", exc)
 
         # Activity callback for forwarding to Activity tab
         self._activity_callback: Optional[Any] = None
@@ -446,36 +483,15 @@ class DashboardView(QWidget):
     # Data aggregation
     # ----------------------------------------------------------------
 
-    def _filtered_records(self) -> list[tuple[datetime, str, str, bool]]:
+    def _filtered_records(self) -> list[tuple[datetime, str, str, str, bool]]:
         """Return alert records within the current time window."""
         cutoff = datetime.now(timezone.utc) - _time_window(self._current_scale)
-        return [(ts, ip, v, b) for ts, ip, v, b in self._alert_records if ts >= cutoff]
-
-    def _aggregate_counts(
-        self, labels: list[str], records: list[tuple[datetime, str, str, bool]]
-    ) -> dict[str, int]:
-        """Aggregate total alert counts per bucket."""
-        counts: dict[str, int] = {lbl: 0 for lbl in labels}
-        for ts, _ip, _v, _b in records:
-            key = _bucket_key(ts, self._current_scale)
-            if key in counts:
-                counts[key] += 1
-        return counts
-
-    def _aggregate_blocked(
-        self, labels: list[str], records: list[tuple[datetime, str, str, bool]]
-    ) -> dict[str, int]:
-        """Aggregate blocked counts per bucket."""
-        counts: dict[str, int] = {lbl: 0 for lbl in labels}
-        for ts, _ip, _v, blocked in records:
-            if blocked:
-                key = _bucket_key(ts, self._current_scale)
-                if key in counts:
-                    counts[key] += 1
-        return counts
+        return [(ts, src, dst, v, b) for ts, src, dst, v, b in self._alert_records if ts >= cutoff]
 
     def _aggregate_verdicts(
-        self, labels: list[str], records: list[tuple[datetime, str, str, bool]]
+        self,
+        labels: list[str],
+        records: list[tuple[datetime, str, str, str, bool]],
     ) -> dict[str, dict[str, int]]:
         """Aggregate verdict counts per bucket."""
         verdicts: dict[str, dict[str, int]] = {
@@ -488,17 +504,30 @@ class DashboardView(QWidget):
             }
             for lbl in labels
         }
-        for ts, _ip, verdict, _b in records:
+        for ts, _src, _dst, verdict, _b in records:
             key = _bucket_key(ts, self._current_scale)
             if key in verdicts and verdict in verdicts[key]:
                 verdicts[key][verdict] += 1
         return verdicts
 
-    def _aggregate_ips(self, records: list[tuple[datetime, str, str, bool]]) -> dict[str, int]:
-        """Aggregate IP counts within the current window."""
+    def _aggregate_by_ip(
+        self,
+        records: list[tuple[datetime, str, str, str, bool]],
+        field: str,
+    ) -> dict[str, int]:
+        """Aggregate alert counts by ``src`` or ``dest`` IP.
+
+        Args:
+            records: Filtered records (already in the time window).
+            field: ``"src"`` or ``"dest"``.
+        """
         counts: dict[str, int] = defaultdict(int)
-        for _ts, ip, _v, _b in records:
-            counts[ip] += 1
+        if field == "src":
+            for _ts, src, _dst, _v, _b in records:
+                counts[src] += 1
+        elif field == "dest":
+            for _ts, _src, dst, _v, _b in records:
+                counts[dst] += 1
         return dict(counts)
 
     # ----------------------------------------------------------------
@@ -506,60 +535,26 @@ class DashboardView(QWidget):
     # ----------------------------------------------------------------
 
     def _rebuild_all_charts(self) -> None:
-        """Rebuild all 4 charts with current scale."""
+        """Rebuild the alerts chart and the two IP tables for the current scale."""
         self._build_alerts_chart()
-        self._build_verdicts_chart()
-        self._build_blocked_chart()
-        self._build_top_ips_chart()
+        self._rebuild_ip_tables()
 
     def _build_alerts_chart(self) -> None:
-        """Build the alerts bar chart for the current scale."""
+        """Build the stacked-verdict bar chart for the current scale.
+
+        Carries the same data the pre-v0.25 ``Verdicts`` chart did —
+        five colour-coded sets (Confirmed / Suspicious / Benign /
+        Inconclusive / Filtered) — but is now the *only* time-series
+        chart on the Dashboard. The simple count chart was a
+        duplicate (same total carried by the bar height here) and the
+        Blocked-IPs chart always read zero in dry-run mode.
+        """
         self._alerts_chart.removeAllSeries()
         for axis in self._alerts_chart.axes():
             self._alerts_chart.removeAxis(axis)
 
         suffix = self._scale_suffix()
         self._alerts_chart.setTitle(f"Alerts ({suffix})")
-
-        labels = _time_labels(self._current_scale)
-        records = self._filtered_records()
-        counts = self._aggregate_counts(labels, records)
-
-        series = QBarSeries()
-        barset = QBarSet("Alerts")
-        barset.setColor(COLOR_BLUE)
-        for lbl in labels:
-            barset.append(counts.get(lbl, 0))
-        series.append(barset)
-        self._alerts_chart.addSeries(series)
-
-        axis_x = QBarCategoryAxis()
-        # v0.9.2 — thin out labels on dense scales (1h = 60 ticks,
-        # 1min = 60 ticks, 1month = 30 ticks) so they stop rendering
-        # as "..." and become legible. See ``_display_labels``.
-        axis_x.append(_display_labels(labels, self._current_scale))
-        axis_x.setLabelsColor(COLOR_TEXT)
-        self._alerts_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
-
-        axis_y = QValueAxis()
-        max_val = max(counts.values(), default=0)
-        y_max, tick_count = _nice_y_ticks(max_val)
-        axis_y.setRange(0, y_max)
-        axis_y.setTickCount(tick_count)
-        axis_y.setLabelFormat("%d")
-        axis_y.setLabelsColor(COLOR_TEXT)
-        self._alerts_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
-
-    def _build_verdicts_chart(self) -> None:
-        """Build the verdicts stacked bar chart for the current scale."""
-        self._verdicts_chart.removeAllSeries()
-        for axis in self._verdicts_chart.axes():
-            self._verdicts_chart.removeAxis(axis)
-
-        suffix = self._scale_suffix()
-        self._verdicts_chart.setTitle(f"Verdicts ({suffix})")
 
         labels = _time_labels(self._current_scale)
         records = self._filtered_records()
@@ -590,15 +585,12 @@ class DashboardView(QWidget):
         series.append(benign)
         series.append(inconclusive)
         series.append(filtered)
-        self._verdicts_chart.addSeries(series)
+        self._alerts_chart.addSeries(series)
 
         axis_x = QBarCategoryAxis()
-        # v0.9.2 — thin out labels on dense scales (1h = 60 ticks,
-        # 1min = 60 ticks, 1month = 30 ticks) so they stop rendering
-        # as "..." and become legible. See ``_display_labels``.
         axis_x.append(_display_labels(labels, self._current_scale))
         axis_x.setLabelsColor(COLOR_TEXT)
-        self._verdicts_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        self._alerts_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
         series.attachAxis(axis_x)
 
         axis_y = QValueAxis()
@@ -611,92 +603,116 @@ class DashboardView(QWidget):
         axis_y.setTickCount(tick_count)
         axis_y.setLabelFormat("%d")
         axis_y.setLabelsColor(COLOR_TEXT)
-        self._verdicts_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        self._alerts_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
         series.attachAxis(axis_y)
 
-    def _build_blocked_chart(self) -> None:
-        """Build the blocked IPs bar chart for the current scale."""
-        self._blocked_chart.removeAllSeries()
-        for axis in self._blocked_chart.axes():
-            self._blocked_chart.removeAxis(axis)
+    # ----------------------------------------------------------------
+    # IP tables (Sources + Destinations)
+    # ----------------------------------------------------------------
 
-        suffix = self._scale_suffix()
-        self._blocked_chart.setTitle(f"Blocked IPs ({suffix})")
+    def _build_ip_table(self, headers: tuple[str, ...]) -> TableWidget:
+        """Common builder for Sources and Destinations tables.
 
-        labels = _time_labels(self._current_scale)
+        Both tables share the same column structure; the difference
+        is the data source (``src_ip`` vs ``dest_ip``) handled in
+        :meth:`_rebuild_ip_tables`.
+        """
+        table = TableWidget()
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(list(headers))
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        table.setShowGrid(False)
+        table.setSortingEnabled(False)
+        # IP and Owner stretch; Alerts/Country/Tag fit content.
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        return table
+
+    def _rebuild_ip_tables(self, top_n: int = 20) -> None:
+        """Refresh both Sources and Destinations tables for the current scale.
+
+        Aggregates the filtered records by ``src_ip`` and ``dest_ip``,
+        sorts by alert count desc, and resolves Owner / Country / Tag
+        from the cached ASN lookup. Cache-only (sync) — uncached IPs
+        render as ``—`` so the UI stays responsive. The pipeline's
+        ``alert_enrichment`` warms the cache for every alert that
+        passes through.
+        """
         records = self._filtered_records()
-        counts = self._aggregate_blocked(labels, records)
-
-        series = QBarSeries()
-        barset = QBarSet("Blocked")
-        barset.setColor(COLOR_RED)
-        for lbl in labels:
-            barset.append(counts.get(lbl, 0))
-        series.append(barset)
-        self._blocked_chart.addSeries(series)
-
-        axis_x = QBarCategoryAxis()
-        # v0.9.2 — thin out labels on dense scales (1h = 60 ticks,
-        # 1min = 60 ticks, 1month = 30 ticks) so they stop rendering
-        # as "..." and become legible. See ``_display_labels``.
-        axis_x.append(_display_labels(labels, self._current_scale))
-        axis_x.setLabelsColor(COLOR_TEXT)
-        self._blocked_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
-
-        axis_y = QValueAxis()
-        max_val = max(counts.values(), default=0)
-        y_max, tick_count = _nice_y_ticks(max_val)
-        axis_y.setRange(0, y_max)
-        axis_y.setTickCount(tick_count)
-        axis_y.setLabelFormat("%d")
-        axis_y.setLabelsColor(COLOR_TEXT)
-        self._blocked_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
-
-    def _build_top_ips_chart(self) -> None:
-        """Build the top 5 source IPs bar chart for the current window."""
-        self._top_ips_chart.removeAllSeries()
-        for axis in self._top_ips_chart.axes():
-            self._top_ips_chart.removeAxis(axis)
-
         suffix = self._scale_suffix()
-        self._top_ips_chart.setTitle(f"Top Source IPs ({suffix})")
+        if hasattr(self, "_sources_caption_label"):
+            self._sources_caption_label.setText(f"Sources ({suffix})")
+        if hasattr(self, "_destinations_caption_label"):
+            self._destinations_caption_label.setText(f"Destinations ({suffix})")
 
-        records = self._filtered_records()
-        ip_counts = self._aggregate_ips(records)
-        top_5 = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        if not top_5:
-            return
+        src_counts = self._aggregate_by_ip(records, "src")
+        dst_counts = self._aggregate_by_ip(records, "dest")
+        self._populate_ip_table(self._sources_table, src_counts, top_n)
+        self._populate_ip_table(self._destinations_table, dst_counts, top_n)
 
-        series = QBarSeries()
-        barset = QBarSet("Alerts")
-        barset.setColor(COLOR_ORANGE)
-        labels: list[str] = []
-        for ip, count in reversed(top_5):
-            barset.append(count)
-            labels.append(ip)
+    def _populate_ip_table(
+        self,
+        table: TableWidget,
+        ip_counts: dict[str, int],
+        top_n: int,
+    ) -> None:
+        """Fill one table with the top-N IPs by alert count."""
+        rows = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        table.setRowCount(len(rows))
+        for row_idx, (ip, count) in enumerate(rows):
+            owner, country, tag = self._resolve_ip_metadata(ip)
+            table.setItem(row_idx, 0, QTableWidgetItem(ip))
+            count_item = QTableWidgetItem(f"{count}")
+            count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            table.setItem(row_idx, 1, count_item)
+            table.setItem(row_idx, 2, QTableWidgetItem(owner))
+            table.setItem(row_idx, 3, QTableWidgetItem(country))
+            table.setItem(row_idx, 4, QTableWidgetItem(tag))
 
-        series.append(barset)
-        self._top_ips_chart.addSeries(series)
+    def _resolve_ip_metadata(self, ip: str) -> tuple[str, str, str]:
+        """Return ``(owner, country, tag)`` for an IP — cache-only.
 
-        # Top Source IPs uses IP strings as labels, NOT time ticks — so
-        # no thinning needed (always 5 bars). Pass labels verbatim.
-        axis_x = QBarCategoryAxis()
-        axis_x.append(labels)
-        axis_x.setLabelsColor(COLOR_TEXT)
-        self._top_ips_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
+        For RFC1918 / loopback / link-local addresses the ASN cache
+        will never carry an answer; we synthesise a ``[lan]`` tag and
+        skip the network lookup. For external IPs we read the cache
+        directly via the private ``_cache_lookup`` so the UI thread
+        never blocks on a network call.
+        """
+        if not ip:
+            return ("—", "—", "—")
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return ("—", "—", "—")
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return ("(local network)", "—", "[lan]")
 
-        axis_y = QValueAxis()
-        max_val = max(c for _, c in top_5)
-        y_max, tick_count = _nice_y_ticks(max_val)
-        axis_y.setRange(0, y_max)
-        axis_y.setTickCount(tick_count)
-        axis_y.setLabelFormat("%d")
-        axis_y.setLabelsColor(COLOR_TEXT)
-        self._top_ips_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
+        if self._asn_enricher is None:
+            return ("—", "—", "—")
+        try:
+            info = self._asn_enricher._cache_lookup(ip)  # noqa: SLF001 — sync fast path
+        except Exception:  # noqa: BLE001 — never break the UI on a cache hiccup
+            return ("—", "—", "—")
+        if info is None:
+            return ("—", "—", "—")
+
+        owner = info.org or info.name or "—"
+        country = info.country or "—"
+
+        tag = ""
+        if self._cdn_allowlist is not None and info.asn:
+            try:
+                match = self._cdn_allowlist.classify_asn(info.asn)
+            except Exception:  # noqa: BLE001
+                match = None
+            if match is not None:
+                tag = f"[{match.category}] {match.organisation}"
+        return (owner, country, tag)
 
     # ----------------------------------------------------------------
     # Public update methods
@@ -708,21 +724,25 @@ class DashboardView(QWidget):
         verdict: str,
         blocked: bool = False,
         ts: Optional[datetime] = None,
+        dest_ip: str = "",
     ) -> None:
-        """Record an alert and refresh all charts.
+        """Record an alert and refresh the chart + IP tables.
 
         v0.9.4: ``ts`` is now optional — when supplied (e.g. during
         the startup replay of ``alerts_history.jsonl``) we use the
         alert's actual detection timestamp instead of wall-clock now.
-        Previously every historical alert was timestamped at boot
-        time, which stacked the entire history into whatever bucket
-        the user booted in — a full-height bar at the current hour
-        and empty bars everywhere else, which looked like "there are
-        no values below the first column".
+
+        v0.25 — added ``dest_ip`` so the new Destinations table can
+        group records by destination. Defaults to ``""`` for callers
+        (legacy / tests) that haven't been updated; those records
+        contribute to Sources only.
         """
         bucket_ts = ts if ts is not None else datetime.now(timezone.utc)
-        self._alert_records.append((bucket_ts, src_ip, verdict, blocked))
-        self._ip_counts[src_ip] += 1
+        self._alert_records.append((bucket_ts, src_ip, dest_ip, verdict, blocked))
+        if src_ip:
+            self._src_counts[src_ip] += 1
+        if dest_ip:
+            self._dest_counts[dest_ip] += 1
         self._rebuild_all_charts()
 
     def set_status(self, status: str, mode: str) -> None:

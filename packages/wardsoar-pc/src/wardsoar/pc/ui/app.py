@@ -1038,6 +1038,7 @@ class WardApp:
             alert_data.get("verdict", "inconclusive"),
             blocked=blocked,
             ts=ts_value,
+            dest_ip=alert_data.get("dest_ip", ""),
         )
 
         # Surface the divergence on the Activity tab when the

@@ -130,13 +130,15 @@ class TestDashboardView:
 
     def test_record_alert_updates_charts(self, qapp: QApplication) -> None:
         dashboard = DashboardView()
-        dashboard.record_alert("10.0.0.1", "confirmed", blocked=True)
+        dashboard.record_alert("10.0.0.1", "confirmed", blocked=True, dest_ip="8.8.8.8")
         assert len(dashboard._alert_records) == 1
-        ts, ip, verdict, blocked = dashboard._alert_records[0]
-        assert ip == "10.0.0.1"
+        ts, src, dst, verdict, blocked = dashboard._alert_records[0]
+        assert src == "10.0.0.1"
+        assert dst == "8.8.8.8"
         assert verdict == "confirmed"
         assert blocked is True
-        assert dashboard._ip_counts["10.0.0.1"] == 1
+        assert dashboard._src_counts["10.0.0.1"] == 1
+        assert dashboard._dest_counts["8.8.8.8"] == 1
 
     def test_display_labels_all_visible_from_v097(self) -> None:
         """v0.9.7 — every bucket carries its own label. Dense scales now
