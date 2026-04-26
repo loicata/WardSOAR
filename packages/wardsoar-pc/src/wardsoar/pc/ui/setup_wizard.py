@@ -72,13 +72,20 @@ PAGE_SYSMON = 1
 PAGE_API_KEYS = 2
 PAGE_NETWORK = 3
 PAGE_PFSENSE_SSH = 4
-PAGE_ANALYSIS = 5
-PAGE_NOTIFICATIONS = 6
-PAGE_PIPELINE = 7
-PAGE_FORENSICS = 8
-PAGE_LOGGING = 9
-PAGE_SUMMARY = 10
-TOTAL_PAGES = 11
+# Step 12 of project_dual_suricata_sync.md: two extra pages collect
+# the local-Suricata setup. They are inserted between the Netgate
+# block and the analyzer block so source-related questions stay
+# contiguous, and they are skipped when ``sources.suricata_local``
+# is False (single-Netgate operators see no extra steps).
+PAGE_SURICATA_INSTALL = 5
+PAGE_SURICATA_CONFIG = 6
+PAGE_ANALYSIS = 7
+PAGE_NOTIFICATIONS = 8
+PAGE_PIPELINE = 9
+PAGE_FORENSICS = 10
+PAGE_LOGGING = 11
+PAGE_SUMMARY = 12
+TOTAL_PAGES = 13
 
 
 def _section_label(text: str) -> SubtitleLabel:
@@ -134,13 +141,20 @@ class SetupWizard(QDialog):
         """Whether the given page should be shown given the source answers.
 
         The pfSense SSH page (and its credentials) is meaningless if the
-        operator said they have no Netgate; skip it. Every other page is
-        always shown — they collect data WardSOAR needs regardless of
-        which alert source feeds the pipeline.
+        operator said they have no Netgate; skip it. The two Suricata-
+        local pages (install + config) are meaningless if the operator
+        said they don't want a local Suricata; skip them. Every other
+        page is always shown — they collect data WardSOAR needs
+        regardless of which alert source feeds the pipeline.
         """
         if self._sources is None:
             return True
         if page_index == PAGE_PFSENSE_SSH and not self._sources.netgate:
+            return False
+        if (
+            page_index in (PAGE_SURICATA_INSTALL, PAGE_SURICATA_CONFIG)
+            and not self._sources.suricata_local
+        ):
             return False
         return True
 
@@ -169,6 +183,8 @@ class SetupWizard(QDialog):
         self._build_api_keys_page()
         self._build_network_page()
         self._build_pfsense_page()
+        self._build_suricata_install_page()
+        self._build_suricata_config_page()
         self._build_analysis_page()
         self._build_notifications_page()
         self._build_pipeline_page()
@@ -541,6 +557,262 @@ class SetupWizard(QDialog):
         self._fields["blocklist_table"].setText("blocklist")
         layout.addWidget(self._fields["blocklist_table"])
         layout.addStretch()
+
+    def _build_suricata_install_page(self) -> None:
+        """Page: Local Suricata installation status + install entry points.
+
+        Step 12 of project_dual_suricata_sync.md. Skipped when
+        ``sources.suricata_local`` is False (see ``_is_page_relevant``).
+
+        Shows the current install status of the two Windows
+        prerequisites (Suricata + Npcap) read live from
+        :mod:`installer_helpers`. The two install actions launch
+        the official installers — they always run with the operator's
+        consent (UAC prompt) and we explicitly DO NOT silently
+        accept the Npcap NPSL: Npcap's licence requires an explicit
+        end-user click, both for compliance and for the operator
+        to see what they are agreeing to. The Suricata installer
+        is GPLv2 / freely redistributable, but we still surface
+        the click for symmetry.
+
+        The page does not block the wizard — the operator can
+        proceed without installing immediately, in which case the
+        runtime falls back to a Netgate-only stream and surfaces a
+        WARNING log inviting them to come back to the wizard.
+        """
+        page, layout = self._scrollable_page()
+        layout.addWidget(_section_label("Local Suricata — Install"))
+
+        layout.addWidget(
+            BodyLabel(
+                "WardSOAR's dual-source mode requires a local Suricata IDS "
+                "and the Npcap packet-capture driver. Both are downloaded "
+                "from their official sources at install time — they are "
+                "never bundled with WardSOAR (license boundary)."
+            )
+        )
+
+        # Status read live so the page reflects the actual state on
+        # the operator's machine. Imported lazily so test environments
+        # without the Windows registry / WMI surface still build the
+        # wizard for unit tests.
+        from wardsoar.pc.installer_helpers import (
+            is_npcap_installed,
+            is_suricata_installed,
+        )
+
+        try:
+            suricata_present, suricata_path = is_suricata_installed()
+        except Exception:  # noqa: BLE001 — installer probe must not crash the wizard
+            suricata_present, suricata_path = False, None
+        try:
+            npcap_present = is_npcap_installed()
+        except Exception:  # noqa: BLE001
+            npcap_present = False
+
+        layout.addSpacing(8)
+        layout.addWidget(_field_label("Suricata status"))
+        suricata_status = StrongBodyLabel(
+            f"Installed at {suricata_path}" if suricata_present else "Not installed"
+        )
+        suricata_status.setStyleSheet("color: #4caf50;" if suricata_present else "color: #f44336;")
+        layout.addWidget(suricata_status)
+        # Field stored so the summary page can surface the state.
+        self._fields["suricata_install_status"] = suricata_status
+
+        suricata_btn = PushButton("Install / re-install Suricata...")
+        suricata_btn.setEnabled(True)
+        suricata_btn.clicked.connect(self._on_install_suricata_clicked)
+        layout.addWidget(suricata_btn)
+        self._fields["suricata_install_btn"] = suricata_btn
+
+        layout.addSpacing(8)
+        layout.addWidget(_field_label("Npcap status"))
+        npcap_status = StrongBodyLabel("Installed" if npcap_present else "Not installed")
+        npcap_status.setStyleSheet("color: #4caf50;" if npcap_present else "color: #f44336;")
+        layout.addWidget(npcap_status)
+        self._fields["npcap_install_status"] = npcap_status
+
+        npcap_btn = PushButton("Install Npcap...")
+        npcap_btn.clicked.connect(self._on_install_npcap_clicked)
+        layout.addWidget(npcap_btn)
+        self._fields["npcap_install_btn"] = npcap_btn
+
+        layout.addSpacing(12)
+        layout.addWidget(_section_label("Licenses"))
+        layout.addWidget(
+            BodyLabel(
+                "Suricata is downloaded from openinfosecfoundation.org under "
+                "the GPLv2. Npcap is downloaded from npcap.com under the "
+                "Npcap Public Source Licence (NPSL); the operator must accept "
+                "the NPSL in the Npcap installer for it to proceed."
+            )
+        )
+        layout.addStretch()
+
+    def _build_suricata_config_page(self) -> None:
+        """Page: Local Suricata runtime configuration.
+
+        Step 12 of project_dual_suricata_sync.md. Skipped when
+        ``sources.suricata_local`` is False.
+
+        Collects the three operator-supplied parameters that
+        ``LocalSuricataAgent`` needs at runtime:
+
+        * **Interface** — Windows network adapter Suricata should
+          listen on, picked from the live psutil enumeration
+          (loopback / disabled adapters filtered out by
+          :func:`list_network_interfaces`).
+        * **Reconciliation window** — Q1 doctrine, default 120 s,
+          band [30, 180]. Only meaningful in dual-source mode
+          (Netgate + local) but stored unconditionally so the
+          field is ready when the operator later turns on the
+          external Netgate.
+        * **Local subnets** — RFC1918 ranges or extras that count
+          as "LAN-only" for the divergence investigator's
+          ``lan_only`` check. One CIDR per line; defaults to
+          empty (the investigator falls back to RFC1918 ranges).
+        """
+        page, layout = self._scrollable_page()
+        layout.addWidget(_section_label("Local Suricata — Configuration"))
+
+        # Interface picker — populated from the live psutil
+        # enumeration.
+        from wardsoar.pc.local_suricata import list_network_interfaces
+
+        try:
+            interfaces = list_network_interfaces()
+        except Exception:  # noqa: BLE001 — psutil failure must not crash the wizard
+            interfaces = []
+            logger.exception("list_network_interfaces failed during wizard build")
+
+        layout.addWidget(_field_label("Listen interface"))
+        self._fields["suricata_interface"] = ComboBox()
+        if interfaces:
+            for iface_name, iface_descr in interfaces:
+                # Display: "<name> — <description>" so the operator
+                # can pick the right adapter even when names are
+                # cryptic (e.g. {GUID}).
+                self._fields["suricata_interface"].addItem(f"{iface_name} — {iface_descr}")
+        else:
+            self._fields["suricata_interface"].addItem("(no interface detected)")
+            self._fields["suricata_interface"].setEnabled(False)
+        layout.addWidget(self._fields["suricata_interface"])
+
+        layout.addSpacing(8)
+        layout.addWidget(_field_label("Reconciliation window (seconds)"))
+        layout.addWidget(
+            CaptionLabel(
+                "How long the dual-source correlator waits for the second "
+                "Suricata to confirm a flow before flagging a divergence. "
+                "Only meaningful when Netgate is also enabled. Q1 doctrine: "
+                "120 s default, allowed band [30, 180]."
+            )
+        )
+        self._fields["suricata_window_s"] = DoubleSpinBox()
+        self._fields["suricata_window_s"].setRange(30.0, 180.0)
+        self._fields["suricata_window_s"].setSingleStep(10.0)
+        self._fields["suricata_window_s"].setValue(120.0)
+        layout.addWidget(self._fields["suricata_window_s"])
+
+        layout.addSpacing(8)
+        layout.addWidget(_field_label("Local subnets — extra CIDRs", optional=True))
+        layout.addWidget(
+            CaptionLabel(
+                "RFC1918 (10/8, 172.16/12, 192.168/16) is always treated "
+                "as LAN. Add operator-specific ranges here, one CIDR per "
+                "line, e.g. ``100.64.0.0/10`` for CGNAT or ``10.13.0.0/16`` "
+                "for a routed lab subnet."
+            )
+        )
+        self._fields["suricata_local_subnets"] = TextEdit()
+        self._fields["suricata_local_subnets"].setFixedHeight(80)
+        layout.addWidget(self._fields["suricata_local_subnets"])
+
+        layout.addStretch()
+
+    def _on_install_suricata_clicked(self) -> None:
+        """Launch the Suricata installer in the background.
+
+        Best-effort wrapper around ``installer_helpers.install_suricata``.
+        Failures are logged and surfaced via the existing status
+        label rather than raised, so the operator sees the failure
+        without losing wizard state.
+
+        The downloaded installer is written to
+        ``<data_dir>/installers`` so a paranoid operator can
+        re-verify the SHA-256 manually after the wizard closes.
+        """
+        from wardsoar.pc.installer_helpers import install_suricata
+
+        download_dir = self._data_dir / "installers"
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        async def _run() -> None:
+            outcome = await install_suricata(download_dir=download_dir)
+            logger.info("install_suricata outcome: %s", outcome)
+            # Update the status label on completion.
+            try:
+                from wardsoar.pc.installer_helpers import is_suricata_installed
+
+                installed, path = is_suricata_installed()
+                status_widget = self._fields.get("suricata_install_status")
+                if status_widget is not None:
+                    status_widget.setText(
+                        f"Installed at {path}" if installed else "Install cancelled or failed"
+                    )
+                    status_widget.setStyleSheet(
+                        "color: #4caf50;" if installed else "color: #f44336;"
+                    )
+            except Exception:  # noqa: BLE001
+                logger.debug("post-install Suricata status refresh failed", exc_info=True)
+
+        # The wizard runs on the main thread; spin a one-shot
+        # asyncio runner. The installer launches an external EXE
+        # asynchronously, so this returns quickly.
+        import asyncio
+
+        try:
+            asyncio.run(_run())
+        except Exception:  # noqa: BLE001 — installer must never crash the wizard
+            logger.exception("Suricata installer failed")
+
+    def _on_install_npcap_clicked(self) -> None:
+        """Launch the Npcap installer in the background.
+
+        See :meth:`_on_install_suricata_clicked` for the rationale —
+        Npcap requires the operator to accept the NPSL in the
+        installer dialog, so we never silent-install.
+        """
+        from wardsoar.pc.installer_helpers import install_npcap
+
+        download_dir = self._data_dir / "installers"
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        async def _run() -> None:
+            outcome = await install_npcap(download_dir=download_dir)
+            logger.info("install_npcap outcome: %s", outcome)
+            try:
+                from wardsoar.pc.installer_helpers import is_npcap_installed
+
+                installed = is_npcap_installed()
+                status_widget = self._fields.get("npcap_install_status")
+                if status_widget is not None:
+                    status_widget.setText(
+                        "Installed" if installed else "Install cancelled or failed"
+                    )
+                    status_widget.setStyleSheet(
+                        "color: #4caf50;" if installed else "color: #f44336;"
+                    )
+            except Exception:  # noqa: BLE001
+                logger.debug("post-install Npcap status refresh failed", exc_info=True)
+
+        import asyncio
+
+        try:
+            asyncio.run(_run())
+        except Exception:  # noqa: BLE001
+            logger.exception("Npcap installer failed")
 
     def _build_analysis_page(self) -> None:
         """Page 4: Analysis & Response."""
@@ -1107,6 +1379,30 @@ class SetupWizard(QDialog):
                 "netgate": self._sources.netgate,
                 "virus_sniff": self._sources.virus_sniff,
                 "suricata_local": self._sources.suricata_local,
+            }
+
+        # Local-Suricata runtime configuration (Step 12 of
+        # project_dual_suricata_sync.md). Written unconditionally —
+        # the runtime ignores the section when ``sources.suricata_local``
+        # is False, but persisting it keeps the operator's choices
+        # ready for a later toggle of the source flag.
+        if "suricata_interface" in self._fields:
+            interface_text = self._fields["suricata_interface"].currentText()
+            # Strip the " — <description>" suffix the picker added
+            # for clarity; the runtime only needs the raw adapter
+            # name.
+            interface_name = interface_text.split(" — ", 1)[0].strip()
+            window_value = self._fields["suricata_window_s"].value()
+            subnets_raw = self._fields["suricata_local_subnets"].toPlainText()
+            subnets_list = [
+                line.strip()
+                for line in subnets_raw.splitlines()
+                if line.strip() and not line.strip().startswith("#")
+            ]
+            config["suricata_local"] = {
+                "interface": interface_name if interface_name != "(no interface detected)" else "",
+                "reconciliation_window_s": window_value,
+                "local_subnets_cidr": subnets_list,
             }
 
         config_dir = data_dir / "config"
