@@ -89,11 +89,10 @@ rights, and would gradually erode operator trust in the verdict.
   — `TestUserInstalledProgramsPath`, `TestTrustedLocalWhitelist`.
 * `packages/wardsoar-pc/tests/test_trusted_local_binaries.py` (new).
 
-### No MSI yet
+### Artefact
 
-Tests + quality gates green, but no MSI built for v0.22.24 — minor
-behavioural patch, the v0.22.23 MSI in `dist/` is still the
-operator-facing artefact until the next packaged release.
+- `WardSOAR_0.22.24.msi` (95.8 MB, 100,501,749 bytes)
+- SHA-256: `67b6f7c78036e535ebd3ffef25870de0d700827adff56b9bff6b828d613a45f5`
 
 ---
 
