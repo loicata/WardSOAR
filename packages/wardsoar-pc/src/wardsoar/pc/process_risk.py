@@ -50,7 +50,7 @@ from typing import Any, Optional
 import psutil
 from psutil import AccessDenied, NoSuchProcess
 
-from wardsoar.pc import win_paths
+from wardsoar.pc import trusted_local_binaries, win_paths
 
 logger = logging.getLogger("ward_soar.process_risk")
 
@@ -137,6 +137,15 @@ _PROGRAM_FILES_PREFIXES: tuple[str, ...] = (
     r"c:\program files (x86)",
     r"c:\programdata\microsoft",
 )
+
+#: Per-user installed-program directory. Modern user-mode installers
+#: (Discord, Slack, VS Code, GitHub Desktop, Postman, Cursor, Notion,
+#: PyInstaller-packaged hobby tools) drop their EXE here. Safer than
+#: ``\Temp\`` or ``\Downloads\`` (the binary is committed and stable),
+#: less safe than Program Files (no admin gate at install time, no
+#: guaranteed publisher signature). A small negative delta acknowledges
+#: that without making us soft on actual drops in user-writable temp.
+_USER_PROGRAMS_PREFIXES: tuple[str, ...] = (r"\appdata\local\programs",)
 
 _SUSPECT_PATH_PREFIXES: tuple[str, ...] = (
     r"c:\users\public",
@@ -315,6 +324,24 @@ def scan_process(pid: int) -> ProcessRiskResult:
             signals=["Process no longer accessible"],
         )
 
+    # ---- Operator-managed local whitelist -----------------------------
+    # Short-circuit BEFORE any signature / Defender / YARA work: the
+    # operator has already pinned this binary by hash and accepts the
+    # verdict. We still hash the file (cheap on cached pages, capped by
+    # ``_MAX_HASH_BYTES``) so a binary swap on the same path drops out
+    # of the whitelist as soon as the hash drifts.
+    file_hash = _sha256_file(exe_path) if exe_path else None
+    if file_hash and trusted_local_binaries.is_trusted(file_hash):
+        return ProcessRiskResult(
+            pid=pid,
+            score=0,
+            verdict=VERDICT_BENIGN,
+            signals=["Trusted local binary (operator-managed whitelist)"],
+            signature_status="unknown",
+            signature_signer="",
+            parent_name=None,
+        )
+
     score = _NEUTRAL_BASELINE
     signals: list[tuple[int, str]] = []  # (absolute-delta, text) — sorted at end
 
@@ -345,6 +372,9 @@ def scan_process(pid: int) -> ProcessRiskResult:
     elif any(path_lower.startswith(p) for p in _PROGRAM_FILES_PREFIXES):
         score -= 10
         signals.append((10, "Runs from Program Files"))
+    elif any(sub in path_lower for sub in _USER_PROGRAMS_PREFIXES):
+        score -= 5
+        signals.append((5, "Runs from per-user installed-programs directory"))
     if any(sub in path_lower for sub in _SUSPECT_PATH_PREFIXES):
         score += 25
         signals.append((25, "Runs from user-writable / temp directory"))

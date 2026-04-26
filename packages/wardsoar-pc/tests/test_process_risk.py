@@ -714,6 +714,189 @@ class TestProcessRiskResultSerialization:
 # ---------------------------------------------------------------------------
 
 
+class TestUserInstalledProgramsPath:
+    """Per-user installed-programs directory should earn a small bonus.
+
+    The intent: legitimate hobby tools / Electron apps / PyInstaller
+    builds that drop into ``%LOCALAPPDATA%\\Programs\\`` are unsigned
+    yet not malicious. Without the bonus, a single unsigned signal
+    pushes a 50-baseline binary straight to ``suspicious``.
+    """
+
+    def test_path_emits_signal(self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object") -> None:
+        import time as _time
+
+        from wardsoar.pc import process_risk as _pr
+
+        exe = tmp_path / "myhobbyapp.exe"  # type: ignore[attr-defined]
+        exe.write_bytes(b"bytes")
+
+        # Fake the resolved exe to look like %LOCALAPPDATA%\Programs.
+        # ``create_time`` sits between the fresh and stale thresholds
+        # so the age signal contributes 0 — we want a clean score we
+        # can pin.
+        proc = MagicMock()
+        proc.name.return_value = "myhobbyapp.exe"
+        proc.exe.return_value = r"C:\Users\loic\AppData\Local\Programs\MyHobbyApp\myhobbyapp.exe"
+        proc.cmdline.return_value = ["myhobbyapp.exe"]
+        proc.parent.return_value = None
+        proc.parents.return_value = []
+        proc.create_time.return_value = _time.time() - 3600  # 1 h ago — neutral
+        proc.memory_maps.return_value = []
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
+        _stub_signature(monkeypatch, "unsigned", "")
+        monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_vt_cache_signal", lambda p: (0, ""))
+        # Pin the whitelist to empty so option C cannot intervene.
+        monkeypatch.setattr(_pr.trusted_local_binaries, "is_trusted", lambda h: False)
+
+        result = scan_process(13131)
+
+        assert any("installed-programs" in s.lower() for s in result.signals)
+        # Without the bonus the score would be 70 (baseline + unsigned),
+        # which sits squarely in ``suspicious`` (50–79). The bonus must
+        # tip it down by exactly 5 — anything more would risk masking
+        # real unsigned malware living in this directory class.
+        baseline_unsigned = 70
+        assert result.score == baseline_unsigned - 5
+        assert result.verdict == VERDICT_SUSPICIOUS  # still suspicious — option C handles the rest
+
+    def test_temp_path_still_dominates(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
+    ) -> None:
+        """A binary somehow under ``\\Temp\\`` must still earn the +25
+        suspect-path penalty even if the path also contains the
+        ``\\AppData\\Local\\`` prefix; the temp signal is additive."""
+        from wardsoar.pc import process_risk as _pr
+
+        proc = MagicMock()
+        proc.name.return_value = "evil.exe"
+        proc.exe.return_value = r"C:\Users\loic\AppData\Local\Temp\evil.exe"
+        proc.cmdline.return_value = ["evil.exe"]
+        proc.parent.return_value = None
+        proc.parents.return_value = []
+        proc.create_time.return_value = 0.0
+        proc.memory_maps.return_value = []
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
+        _stub_signature(monkeypatch, "unsigned", "")
+        monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_vt_cache_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr.trusted_local_binaries, "is_trusted", lambda h: False)
+
+        result = scan_process(14141)
+
+        # Should NOT have the user-installed bonus — the matching
+        # branch is an ``elif`` after Program Files, and ``\Temp\``
+        # is not in either trusted category.
+        assert not any("installed-programs" in s.lower() for s in result.signals)
+        assert any("user-writable" in s.lower() or "temp" in s.lower() for s in result.signals)
+
+
+class TestTrustedLocalWhitelist:
+    """Operator-managed SHA-256 whitelist must short-circuit scoring."""
+
+    def test_trusted_hash_returns_benign_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
+    ) -> None:
+        from wardsoar.pc import process_risk as _pr
+
+        # Real file on disk so ``_sha256_file`` returns a non-None hash.
+        exe = tmp_path / "trusted_tool.exe"  # type: ignore[attr-defined]
+        exe.write_bytes(b"deterministic content")
+
+        proc = MagicMock()
+        proc.name.return_value = "trusted_tool.exe"
+        proc.exe.return_value = str(exe)
+        proc.cmdline.return_value = ["trusted_tool.exe"]
+        proc.parent.return_value = None
+        proc.parents.return_value = []
+        proc.create_time.return_value = 0.0
+        proc.memory_maps.return_value = []
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
+
+        # Pin the whitelist to "match anything that is hashable".
+        monkeypatch.setattr(_pr.trusted_local_binaries, "is_trusted", lambda h: True)
+
+        # Sentinels: if any of these are reached, the short-circuit
+        # failed and the test should fail loudly.
+        def _must_not_run(*_a: object, **_kw: object) -> object:
+            raise AssertionError("scan_process must short-circuit before this helper")
+
+        monkeypatch.setattr(_pr, "_check_signature", _must_not_run)
+        monkeypatch.setattr(_pr, "_defender_signal", _must_not_run)
+        monkeypatch.setattr(_pr, "_yara_signal", _must_not_run)
+        monkeypatch.setattr(_pr, "_vt_cache_signal", _must_not_run)
+
+        result = scan_process(15151)
+
+        assert result.verdict == VERDICT_BENIGN
+        assert result.score == 0
+        assert any("Trusted local binary" in s for s in result.signals)
+        assert result.signature_status == "unknown"
+        assert result.signature_signer == ""
+        assert result.parent_name is None
+
+    def test_untrusted_hash_proceeds_to_full_scoring(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: "object"
+    ) -> None:
+        from wardsoar.pc import process_risk as _pr
+
+        exe = tmp_path / "unknown.exe"  # type: ignore[attr-defined]
+        exe.write_bytes(b"bytes")
+
+        proc = MagicMock()
+        proc.name.return_value = "unknown.exe"
+        proc.exe.return_value = str(exe)
+        proc.cmdline.return_value = ["unknown.exe"]
+        proc.parent.return_value = None
+        proc.parents.return_value = []
+        proc.create_time.return_value = 0.0
+        proc.memory_maps.return_value = []
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
+        monkeypatch.setattr(_pr.trusted_local_binaries, "is_trusted", lambda h: False)
+        _stub_signature(monkeypatch, "unsigned", "")
+        monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_vt_cache_signal", lambda p: (0, ""))
+
+        result = scan_process(16161)
+
+        # Full scoring ran: unsigned contributed +20, no early exit.
+        assert any("Unsigned" in s for s in result.signals)
+        assert not any("Trusted local binary" in s for s in result.signals)
+
+    def test_unhashable_path_does_not_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``proc.exe()`` may legitimately return ``""`` for system
+        processes — the short-circuit must remain safe."""
+        from wardsoar.pc import process_risk as _pr
+
+        proc = MagicMock()
+        proc.name.return_value = "system"
+        proc.exe.return_value = ""
+        proc.cmdline.return_value = []
+        proc.parent.return_value = None
+        proc.parents.return_value = []
+        proc.create_time.return_value = 0.0
+        proc.memory_maps.return_value = []
+        monkeypatch.setattr("wardsoar.pc.process_risk.psutil.Process", lambda pid: proc)
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            _pr.trusted_local_binaries, "is_trusted", lambda h: called.append(h) or False
+        )
+        _stub_signature(monkeypatch, "unknown", "")
+        monkeypatch.setattr(_pr, "_defender_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_yara_signal", lambda p: (0, ""))
+        monkeypatch.setattr(_pr, "_vt_cache_signal", lambda p: (0, ""))
+
+        scan_process(17171)  # must not raise
+
+        # No hash, so the whitelist must not have been consulted.
+        assert called == []
+
+
 class TestCheckSignature:
     def test_missing_exe_path_returns_unknown(self) -> None:
         from wardsoar.pc.process_risk import _check_signature
