@@ -265,11 +265,26 @@ class ConfigView(QWidget):
         if not config_path.exists():
             return
         try:
+            from wardsoar.core.responder import (
+                DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
+                DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+            )
+
             with open(config_path, "r", encoding="utf-8") as fh:
                 raw = _yaml.safe_load(fh) or {}
             analyzer = raw.get("analyzer", {}) if isinstance(raw, dict) else {}
-            protect_val = float(analyzer.get("confidence_threshold", 0.70))
-            hp_val = float(analyzer.get("hard_protect_benign_threshold", 0.99))
+            protect_val = float(
+                analyzer.get(
+                    "confidence_threshold",
+                    DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+                )
+            )
+            hp_val = float(
+                analyzer.get(
+                    "hard_protect_benign_threshold",
+                    DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
+                )
+            )
         except (OSError, _yaml.YAMLError, ValueError, TypeError):
             logger.debug("Could not preload threshold values from config.yaml", exc_info=True)
             return

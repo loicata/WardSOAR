@@ -106,18 +106,7 @@ class TestDashboardView:
 
     def test_construction(self, qapp: QApplication) -> None:
         dashboard = DashboardView()
-        assert dashboard._alerts_card is not None
-
-    def test_update_metrics(self, qapp: QApplication) -> None:
-        dashboard = DashboardView()
-        dashboard.update_metrics(
-            {
-                "alerts_today": 42,
-                "blocked_today": 3,
-            }
-        )
-        assert dashboard._alerts_value.text() == "42"
-        assert dashboard._blocked_value.text() == "3"
+        assert dashboard._status_card is not None
 
     def test_set_status(self, qapp: QApplication) -> None:
         dashboard = DashboardView()

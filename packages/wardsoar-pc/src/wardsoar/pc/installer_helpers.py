@@ -92,11 +92,28 @@ NPCAP_LICENSE_URL: str = "https://npcap.com/oem/license.html"
 #: don't pin to.
 NPCAP_EXPECTED_SIGNER: str = "Insecure.Com LLC"
 
-#: Default Suricata Windows installer URL. Pinning the same way
-#: as Npcap. Override via ``WARDSOAR_SURICATA_URL``.
-DEFAULT_SURICATA_URL: str = (
-    "https://www.openinfosecfoundation.org/download/windows/Suricata-7.0.7-1-64bit.msi"
-)
+#: Suricata download landing page — parsed by
+#: :func:`resolve_latest_suricata_url` to discover the current stable
+#: MSI URL without rebuilding WardSOAR every time OISF ships a point
+#: release. Override via ``WARDSOAR_SURICATA_INDEX_URL``.
+SURICATA_INDEX_URL: str = "https://suricata.io/download/"
+
+#: Base URL prefix where OISF hosts the signed Windows MSIs. The
+#: filename portion (``Suricata-X.Y.Z-1-64bit.msi``) is appended to
+#: this prefix at runtime.
+SURICATA_DOWNLOAD_PREFIX: str = "https://www.openinfosecfoundation.org/download/windows/"
+
+#: Fallback Suricata MSI URL — used when the index parser cannot
+#: reach suricata.io (no network, page format changed, etc.). Bump
+#: this whenever you commit a new Suricata point release so the
+#: fallback never lags too far behind the latest stable.
+#: Override via ``WARDSOAR_SURICATA_URL``.
+DEFAULT_SURICATA_URL: str = SURICATA_DOWNLOAD_PREFIX + "Suricata-8.0.4-1-64bit.msi"
+
+#: Regex used to identify a Suricata Windows installer filename in
+#: the download index. Matches both 7.x (LTS) and 8.x (current)
+#: entries; the parser ranks them by semver and picks the highest.
+_SURICATA_MSI_PATTERN: "re.Pattern[str]" = re.compile(r"Suricata-(\d+)\.(\d+)\.(\d+)-1-64bit\.msi")
 
 #: Suricata source license URL.
 SURICATA_LICENSE_URL: str = "https://github.com/OISF/suricata/blob/master/LICENSE"
@@ -119,6 +136,12 @@ _HTTP_READ_TIMEOUT_S: float = 600.0  # 10 minutes total
 #: Authenticode verification timeout. The PowerShell call typically
 #: returns in <500 ms once the file is on disk.
 _AUTHENTICODE_TIMEOUT_S: float = 10.0
+
+#: Timeouts for the Suricata index fetch. Short — if suricata.io is
+#: slow we'd rather fall back to the hardcoded URL than make the
+#: operator wait indefinitely while staring at the Install button.
+_INDEX_CONNECT_TIMEOUT_S: float = 5.0
+_INDEX_READ_TIMEOUT_S: float = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -630,12 +653,97 @@ async def install_npcap(
     return InstallOutcome(success=True, detail="installed", installer_path=dest, sha256=sha)
 
 
+async def resolve_latest_suricata_url(
+    index_url: Optional[str] = None,
+) -> Optional[str]:
+    """Discover the latest Suricata stable MSI URL from the OISF index.
+
+    Fetches the Suricata download landing page and picks the
+    highest-version ``Suricata-X.Y.Z-1-64bit.msi`` filename it
+    finds. The result is the canonical OISF download URL —
+    independent of the wizard build date, so a freshly installed
+    WardSOAR always grabs the current stable.
+
+    Best-effort by design. Any failure (offline, page redesign,
+    parsing miss, signature/format change) returns ``None``; the
+    caller falls back to :data:`DEFAULT_SURICATA_URL`.
+
+    Args:
+        index_url: Override of :data:`SURICATA_INDEX_URL` — useful
+            for unit tests pointing at a local fixture.
+
+    Returns:
+        The full HTTPS URL of the latest stable Windows installer,
+        or ``None`` when discovery failed.
+    """
+    target = index_url or os.environ.get("WARDSOAR_SURICATA_INDEX_URL") or SURICATA_INDEX_URL
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=_INDEX_CONNECT_TIMEOUT_S,
+                read=_INDEX_READ_TIMEOUT_S,
+                write=_INDEX_READ_TIMEOUT_S,
+                pool=_INDEX_READ_TIMEOUT_S,
+            ),
+            follow_redirects=True,
+        ) as client:
+            response = await client.get(target)
+    except (httpx.HTTPError, OSError) as exc:
+        logger.info(
+            "resolve_latest_suricata_url: index fetch failed (%s) — caller "
+            "will fall back to DEFAULT_SURICATA_URL.",
+            exc,
+        )
+        return None
+
+    if response.status_code != 200:
+        logger.info(
+            "resolve_latest_suricata_url: index returned HTTP %s — falling back.",
+            response.status_code,
+        )
+        return None
+
+    candidates: list[tuple[tuple[int, int, int], str]] = []
+    for match in _SURICATA_MSI_PATTERN.finditer(response.text):
+        try:
+            major = int(match.group(1))
+            minor = int(match.group(2))
+            patch = int(match.group(3))
+        except (TypeError, ValueError):
+            continue
+        candidates.append(((major, minor, patch), match.group(0)))
+
+    if not candidates:
+        logger.info(
+            "resolve_latest_suricata_url: no Suricata MSI filenames found "
+            "in the index — page format may have changed; falling back."
+        )
+        return None
+
+    # Pick the highest semver — tuple comparison handles 8.0.10 > 8.0.4
+    # correctly because we compare ints, not strings.
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    latest_filename = candidates[0][1]
+    return SURICATA_DOWNLOAD_PREFIX + latest_filename
+
+
 async def install_suricata(
     download_dir: Path,
     progress_callback: Optional[ProgressCallback] = None,
     url: Optional[str] = None,
 ) -> InstallOutcome:
     """End-to-end Suricata install: detect → download → verify → launch.
+
+    URL resolution order (first non-empty wins):
+
+    1. ``url`` argument — explicit override from the caller.
+    2. ``WARDSOAR_SURICATA_URL`` environment variable — operator
+       override for one-off testing.
+    3. :func:`resolve_latest_suricata_url` — dynamic discovery of
+       the current stable MSI from suricata.io.
+    4. :data:`DEFAULT_SURICATA_URL` — pinned fallback that ships
+       with WardSOAR.
 
     Idempotent: if Suricata is already installed (binary findable),
     returns ``InstallOutcome(success=True, detail="already_installed")``
@@ -653,7 +761,11 @@ async def install_suricata(
     if found:
         return InstallOutcome(success=True, detail="already_installed")
 
-    final_url = url or os.environ.get("WARDSOAR_SURICATA_URL") or DEFAULT_SURICATA_URL
+    final_url = url or os.environ.get("WARDSOAR_SURICATA_URL")
+    if not final_url:
+        final_url = await resolve_latest_suricata_url()
+    if not final_url:
+        final_url = DEFAULT_SURICATA_URL
     dest = download_dir / Path(_filename_from_url(final_url, default="suricata.msi"))
 
     try:

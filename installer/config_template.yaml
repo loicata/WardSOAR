@@ -203,3 +203,22 @@ app:
   start_minimized: false
   single_instance: true
   save_window_state: true
+
+# --- SYSTEM TAB ---
+# Active Services table on the System tab. Each entry is a Windows
+# service name (matched against psutil.win_service_iter) plus a
+# display label. Entries that aren't installed on the host show as
+# "Not installed". Add or remove rows freely — the UI adapts.
+system_view:
+  refresh_interval_seconds: 30
+  services:
+    - label: "Suricata IDS"
+      service_name: "Suricata"
+    - label: "Npcap helper"
+      service_name: "npcap"
+    - label: "Sysmon"
+      service_name: "Sysmon64"
+    - label: "Sysmon (32-bit)"
+      service_name: "Sysmon"
+    - label: "Windows Defender"
+      service_name: "WinDefend"

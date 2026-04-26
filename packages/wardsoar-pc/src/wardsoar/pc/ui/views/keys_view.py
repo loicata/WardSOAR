@@ -106,12 +106,12 @@ def _build_auto_enabled_card() -> SimpleCardWidget:
         name_row.setContentsMargins(0, 0, 0, 0)
         name_row.addWidget(BodyLabel(f"\u2705  {source.name}"), stretch=1)
         cadence = CaptionLabel(source.refresh_cadence)
-        cadence.setStyleSheet("color: #7a7a7a;")
+        cadence.setStyleSheet("color: #e4e4e4;")
         name_row.addWidget(cadence)
         row.addLayout(name_row)
 
         desc = CaptionLabel(f"    {source.description}")
-        desc.setStyleSheet("color: #5a5a5a;")
+        desc.setStyleSheet("color: #e4e4e4;")
         desc.setWordWrap(True)
         row.addWidget(desc)
 
@@ -156,14 +156,14 @@ def _build_tier_card(
         header.addWidget(BodyLabel(label_text), stretch=1)
         if spec.pricing:
             pricing = CaptionLabel(spec.pricing)
-            pricing.setStyleSheet("color: #7a7a7a;")
+            pricing.setStyleSheet("color: #e4e4e4;")
             pricing.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             header.addWidget(pricing)
         entry.addLayout(header)
 
         # Description.
         desc = CaptionLabel(spec.description)
-        desc.setStyleSheet("color: #5a5a5a;")
+        desc.setStyleSheet("color: #e4e4e4;")
         desc.setWordWrap(True)
         entry.addWidget(desc)
 

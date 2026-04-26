@@ -32,7 +32,9 @@ if sys.platform != "win32":  # pragma: no cover — non-Windows skip
     pytest.skip("installer_helpers is Windows-only", allow_module_level=True)
 
 from wardsoar.pc.installer_helpers import (  # noqa: E402
+    DEFAULT_SURICATA_URL,
     NPCAP_EXPECTED_SIGNER,
+    SURICATA_DOWNLOAD_PREFIX,
     AuthenticodeResult,
     InstallerError,
     _extract_signer_short_name,
@@ -43,6 +45,7 @@ from wardsoar.pc.installer_helpers import (  # noqa: E402
     is_npcap_installed,
     is_suricata_installed,
     launch_installer,
+    resolve_latest_suricata_url,
     sha256_of,
     verify_authenticode,
 )
@@ -516,3 +519,235 @@ class TestInstallSuricata:
         monkeypatch.setattr("wardsoar.pc.installer_helpers.launch_installer", lambda _p: 3010)
         outcome = await install_suricata(tmp_path)
         assert outcome.success is True
+
+
+# ---------------------------------------------------------------------------
+# resolve_latest_suricata_url
+# ---------------------------------------------------------------------------
+
+
+def _index_html(versions: list[str]) -> str:
+    """Synthesise a minimal Suricata download page with the given versions.
+
+    Mirrors the real ``suricata.io/download`` layout enough that the
+    parser finds each ``Suricata-X.Y.Z-1-64bit.msi`` filename — that
+    is all the parser cares about, so we keep the fixture lean.
+    """
+    lines = ["<html><body>"]
+    for v in versions:
+        lines.append(
+            f'<a href="https://www.openinfosecfoundation.org/download/windows/'
+            f'Suricata-{v}-1-64bit.msi">Suricata-{v}-1-64bit.msi</a>'
+        )
+    lines.append("</body></html>")
+    return "\n".join(lines)
+
+
+def _httpx_response(status: int, text: str) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status
+    response.text = text
+    return response
+
+
+def _fake_async_client(response_or_exc: Any) -> MagicMock:
+    """Build an ``httpx.AsyncClient`` mock whose ``__aenter__`` returns
+    a stubbed client whose ``get`` either yields ``response_or_exc`` or
+    raises it when it is an Exception subclass."""
+    client = MagicMock()
+    if isinstance(response_or_exc, BaseException):
+        client.get = AsyncMock(side_effect=response_or_exc)
+    else:
+        client.get = AsyncMock(return_value=response_or_exc)
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=client)
+    factory.return_value.__aexit__ = AsyncMock(return_value=False)
+    return factory
+
+
+class TestResolveLatestSuricataUrl:
+    @pytest.mark.asyncio
+    async def test_picks_highest_semver_when_multiple_listed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The real suricata.io page lists 8.x then 7.x; our parser must
+        # pick the highest version regardless of ordering.
+        html = _index_html(["7.0.15", "8.0.4", "8.0.10"])
+        factory = _fake_async_client(_httpx_response(200, html))
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.httpx.AsyncClient", factory)
+
+        url = await resolve_latest_suricata_url(index_url="https://example.test/dl")
+        assert url == SURICATA_DOWNLOAD_PREFIX + "Suricata-8.0.10-1-64bit.msi"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_http_error_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        factory = _fake_async_client(_httpx_response(500, "internal error"))
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.httpx.AsyncClient", factory)
+        assert await resolve_latest_suricata_url(index_url="https://example.test/dl") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_network_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        factory = _fake_async_client(httpx.ConnectError("dns down"))
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.httpx.AsyncClient", factory)
+        assert await resolve_latest_suricata_url(index_url="https://example.test/dl") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_page_has_no_msi_filenames(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Page reformatted so the regex finds nothing.
+        factory = _fake_async_client(_httpx_response(200, "<html>no msi here</html>"))
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.httpx.AsyncClient", factory)
+        assert await resolve_latest_suricata_url(index_url="https://example.test/dl") is None
+
+    @pytest.mark.asyncio
+    async def test_env_override_index_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The function should honour the WARDSOAR_SURICATA_INDEX_URL env
+        # var when no explicit ``index_url`` is provided.
+        captured: dict[str, str] = {}
+
+        async def _fake_get(url: str) -> MagicMock:
+            captured["url"] = url
+            return _httpx_response(200, _index_html(["8.0.4"]))
+
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=_fake_get)
+        factory = MagicMock()
+        factory.return_value.__aenter__ = AsyncMock(return_value=client)
+        factory.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.httpx.AsyncClient", factory)
+        monkeypatch.setenv("WARDSOAR_SURICATA_INDEX_URL", "https://override.test/dl")
+        url = await resolve_latest_suricata_url()
+        assert captured["url"] == "https://override.test/dl"
+        assert url == SURICATA_DOWNLOAD_PREFIX + "Suricata-8.0.4-1-64bit.msi"
+
+
+class TestInstallSuricataUrlResolution:
+    """Verify the URL-resolution chain in :func:`install_suricata`."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_url_argument_wins(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: dict[str, str] = {}
+
+        async def fake_download(url: str, dest: Path, **_: Any) -> None:
+            captured["url"] = url
+            dest.write_bytes(b"x")
+
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.is_suricata_installed", lambda: (False, None)
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.download_installer", fake_download)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.verify_authenticode",
+            lambda _p, _s: AuthenticodeResult(
+                status="valid",
+                signer="Open Information Security Foundation",
+            ),
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.launch_installer", lambda _p: 0)
+        # Resolver must NOT be called when the caller passed an explicit URL.
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.resolve_latest_suricata_url",
+            AsyncMock(return_value="https://should-not-be-used.test/x.msi"),
+        )
+
+        await install_suricata(tmp_path, url="https://explicit.test/forced.msi")
+        assert captured["url"] == "https://explicit.test/forced.msi"
+
+    @pytest.mark.asyncio
+    async def test_env_var_wins_over_resolver(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: dict[str, str] = {}
+
+        async def fake_download(url: str, dest: Path, **_: Any) -> None:
+            captured["url"] = url
+            dest.write_bytes(b"x")
+
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.is_suricata_installed", lambda: (False, None)
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.download_installer", fake_download)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.verify_authenticode",
+            lambda _p, _s: AuthenticodeResult(
+                status="valid",
+                signer="Open Information Security Foundation",
+            ),
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.launch_installer", lambda _p: 0)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.resolve_latest_suricata_url",
+            AsyncMock(return_value="https://resolver.test/should-not-be-used.msi"),
+        )
+        monkeypatch.setenv("WARDSOAR_SURICATA_URL", "https://env.test/from-env.msi")
+
+        await install_suricata(tmp_path)
+        assert captured["url"] == "https://env.test/from-env.msi"
+
+    @pytest.mark.asyncio
+    async def test_resolver_used_when_no_overrides(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: dict[str, str] = {}
+
+        async def fake_download(url: str, dest: Path, **_: Any) -> None:
+            captured["url"] = url
+            dest.write_bytes(b"x")
+
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.is_suricata_installed", lambda: (False, None)
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.download_installer", fake_download)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.verify_authenticode",
+            lambda _p, _s: AuthenticodeResult(
+                status="valid",
+                signer="Open Information Security Foundation",
+            ),
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.launch_installer", lambda _p: 0)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.resolve_latest_suricata_url",
+            AsyncMock(return_value=SURICATA_DOWNLOAD_PREFIX + "Suricata-9.9.9-1-64bit.msi"),
+        )
+        monkeypatch.delenv("WARDSOAR_SURICATA_URL", raising=False)
+
+        await install_suricata(tmp_path)
+        assert captured["url"].endswith("Suricata-9.9.9-1-64bit.msi")
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_default_when_resolver_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        captured: dict[str, str] = {}
+
+        async def fake_download(url: str, dest: Path, **_: Any) -> None:
+            captured["url"] = url
+            dest.write_bytes(b"x")
+
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.is_suricata_installed", lambda: (False, None)
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.download_installer", fake_download)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.verify_authenticode",
+            lambda _p, _s: AuthenticodeResult(
+                status="valid",
+                signer="Open Information Security Foundation",
+            ),
+        )
+        monkeypatch.setattr("wardsoar.pc.installer_helpers.launch_installer", lambda _p: 0)
+        monkeypatch.setattr(
+            "wardsoar.pc.installer_helpers.resolve_latest_suricata_url",
+            AsyncMock(return_value=None),
+        )
+        monkeypatch.delenv("WARDSOAR_SURICATA_URL", raising=False)
+
+        await install_suricata(tmp_path)
+        assert captured["url"] == DEFAULT_SURICATA_URL

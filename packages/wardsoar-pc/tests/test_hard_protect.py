@@ -49,7 +49,11 @@ from wardsoar.core.models import (
     WardMode,
 )
 from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker, PfSenseSSH
-from wardsoar.core.responder import ThreatResponder
+from wardsoar.core.responder import (
+    DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
+    DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+    ThreatResponder,
+)
 from wardsoar.core.trusted_temp import TrustedTempRegistry
 
 # ---------------------------------------------------------------------------
@@ -70,8 +74,8 @@ def _responder(
     whitelist_ips: set[str] | None = None,
     trusted: TrustedTempRegistry | None = None,
     tmp_path: Path | None = None,
-    confidence_threshold: float = 0.7,
-    hard_protect_benign_threshold: float = 0.99,
+    confidence_threshold: float = DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+    hard_protect_benign_threshold: float = DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
 ) -> ThreatResponder:
     """Build a ThreatResponder with mocked SSH + a real BlockTracker."""
     ssh = MagicMock(spec=PfSenseSSH)

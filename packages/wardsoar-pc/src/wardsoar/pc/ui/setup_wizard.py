@@ -18,6 +18,7 @@ import yaml
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
     QFileDialog,
     QFrame,
@@ -38,6 +39,7 @@ from qfluentwidgets import (
     PasswordLineEdit,
     PrimaryPushButton,
     PushButton,
+    RadioButton,
     SimpleCardWidget,
     SpinBox,
     StrongBodyLabel,
@@ -66,26 +68,38 @@ _LEGACY_WIZARD_ALIASES: dict[str, str] = {
 
 logger = logging.getLogger("ward_soar.ui.setup_wizard")
 
-# Page indices
+# Page indices.
+# The source-topology questions used to live in a separate
+# ``SourcesQuestionnaire`` dialog opened just before this wizard.
+# That two-dialog flow felt like a hand-off — the operator clicked
+# Finish, blinked, and a different window appeared. Inlining the
+# four pages right after the Welcome step keeps the whole experience
+# inside one continuous Back/Next sequence with a single page
+# indicator. Page-skip rules in :meth:`_is_page_relevant` then
+# branch the rest of the flow on the answers captured here.
 PAGE_WELCOME = 0
-PAGE_SYSMON = 1
-PAGE_API_KEYS = 2
-PAGE_NETWORK = 3
-PAGE_PFSENSE_SSH = 4
+PAGE_SOURCES_NETGATE = 1
+PAGE_SOURCES_VIRUS_SNIFF = 2
+PAGE_SOURCES_SURICATA = 3
+PAGE_SOURCES_RECAP = 4
+PAGE_SYSMON = 5
+PAGE_API_KEYS = 6
+PAGE_NETWORK = 7
+PAGE_PFSENSE_SSH = 8
 # Step 12 of project_dual_suricata_sync.md: two extra pages collect
 # the local-Suricata setup. They are inserted between the Netgate
 # block and the analyzer block so source-related questions stay
 # contiguous, and they are skipped when ``sources.suricata_local``
 # is False (single-Netgate operators see no extra steps).
-PAGE_SURICATA_INSTALL = 5
-PAGE_SURICATA_CONFIG = 6
-PAGE_ANALYSIS = 7
-PAGE_NOTIFICATIONS = 8
-PAGE_PIPELINE = 9
-PAGE_FORENSICS = 10
-PAGE_LOGGING = 11
-PAGE_SUMMARY = 12
-TOTAL_PAGES = 13
+PAGE_SURICATA_INSTALL = 9
+PAGE_SURICATA_CONFIG = 10
+PAGE_ANALYSIS = 11
+PAGE_NOTIFICATIONS = 12
+PAGE_PIPELINE = 13
+PAGE_FORENSICS = 14
+PAGE_LOGGING = 15
+PAGE_SUMMARY = 16
+TOTAL_PAGES = 17
 
 
 def _section_label(text: str) -> SubtitleLabel:
@@ -100,7 +114,7 @@ def _field_label(text: str, optional: bool = False) -> BodyLabel:
     suffix = "  (Optional)" if optional else ""
     label = BodyLabel(f"{text}{suffix}")
     if optional:
-        label.setStyleSheet("color: #9a9a9a;")
+        label.setStyleSheet("color: #e4e4e4;")
     return label
 
 
@@ -128,7 +142,17 @@ class SetupWizard(QDialog):
     ) -> None:
         super().__init__(parent)
         self._data_dir = data_dir
+        # When ``sources`` is supplied (legacy callers, tests), the four
+        # source-topology pages are skipped and the wizard behaves like
+        # the pre-merge SetupWizard. When ``None`` — the normal first-run
+        # path — the four pages run, populate ``self._sources`` as the
+        # operator answers, and downstream pages branch on the result
+        # via :meth:`_is_page_relevant`.
         self._sources = sources
+        self._sources_inline = sources is None
+        self._netgate_choice = bool(sources.netgate) if sources else False
+        self._virus_sniff_choice = bool(sources.virus_sniff) if sources else False
+        self._suricata_choice = bool(sources.suricata_local) if sources else False
         self.setWindowTitle("WardSOAR — Setup Wizard")
         self.setMinimumSize(800, 700)
         self.resize(900, 750)
@@ -136,24 +160,54 @@ class SetupWizard(QDialog):
         self._fields: dict[str, Any] = {}
         self._setup_ui()
         self._apply_theme()
+        # Sync any state that depends on the source answers — needed
+        # so the Sysmon page already shows the right emphasis on
+        # first paint when ``sources`` was supplied at construction.
+        self._refresh_sysmon_wording()
 
     def _is_page_relevant(self, page_index: int) -> bool:
         """Whether the given page should be shown given the source answers.
 
-        The pfSense SSH page (and its credentials) is meaningless if the
-        operator said they have no Netgate; skip it. The two Suricata-
-        local pages (install + config) are meaningless if the operator
-        said they don't want a local Suricata; skip them. Every other
-        page is always shown — they collect data WardSOAR needs
-        regardless of which alert source feeds the pipeline.
+        The four ``PAGE_SOURCES_*`` question pages are skipped when
+        the wizard was constructed with an explicit ``sources``
+        argument (legacy path / unit tests) — those callers already
+        know the answers and would otherwise have to click through
+        them again. In the normal first-run flow
+        ``self._sources_inline`` is True and the pages run.
+
+        The recap page (``PAGE_SOURCES_RECAP``) is also skipped when
+        the chosen source combination produces no coverage warnings
+        — re-stating the operator's own answers right after they
+        clicked them is friction. The page only opens when there is
+        actually a gap or exclusivity warning to read.
+
+        The pfSense SSH page (and its credentials) is meaningless if
+        the operator said they have no Netgate; skip it. The two
+        Suricata-local pages (install + config) are meaningless if the
+        operator said they don't want a local Suricata; skip them.
+        Every other page is always shown — they collect data WardSOAR
+        needs regardless of which alert source feeds the pipeline.
         """
-        if self._sources is None:
-            return True
-        if page_index == PAGE_PFSENSE_SSH and not self._sources.netgate:
+        if page_index in (
+            PAGE_SOURCES_NETGATE,
+            PAGE_SOURCES_VIRUS_SNIFF,
+            PAGE_SOURCES_SURICATA,
+        ):
+            return self._sources_inline
+        if page_index == PAGE_SOURCES_RECAP:
+            if not self._sources_inline:
+                return False
+            choices = SourceChoices(
+                netgate=self._netgate_choice,
+                virus_sniff=self._virus_sniff_choice,
+                suricata_local=self._suricata_choice,
+            )
+            return bool(choices.coverage_warnings())
+        if page_index == PAGE_PFSENSE_SSH and not self._netgate_choice:
             return False
         if (
             page_index in (PAGE_SURICATA_INSTALL, PAGE_SURICATA_CONFIG)
-            and not self._sources.suricata_local
+            and not self._suricata_choice
         ):
             return False
         return True
@@ -176,9 +230,15 @@ class SetupWizard(QDialog):
         header_layout.addWidget(self._page_indicator)
         layout.addWidget(header)
 
-        # Pages stack
+        # Pages stack — Welcome first, then the four source-topology
+        # pages (skipped when ``sources`` was passed by a legacy
+        # caller), then the rest of the configuration flow.
         self._stack = QStackedWidget()
         self._build_welcome_page()
+        self._build_sources_netgate_page()
+        self._build_sources_virus_sniff_page()
+        self._build_sources_suricata_page()
+        self._build_sources_recap_page()
         self._build_sysmon_page()
         self._build_api_keys_page()
         self._build_network_page()
@@ -223,10 +283,18 @@ class SetupWizard(QDialog):
             )
 
     def _scrollable_page(self) -> tuple[QWidget, QVBoxLayout]:
-        """Create a scrollable page with a content layout."""
+        """Create a scrollable page with a content layout.
+
+        Vertical scrollbar appears on demand (long pages); the
+        horizontal one is force-disabled because the wizard is sized
+        wide enough for any reasonable label and a horizontal
+        scrollbar at the bottom of every page is just noise. Long
+        labels word-wrap instead of triggering a sideways scroll.
+        """
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(32, 24, 32, 24)
@@ -236,8 +304,233 @@ class SetupWizard(QDialog):
         return content, content_layout
 
     # ----------------------------------------------------------------
-    # Page builders
+    # Page builders — source topology (was the standalone
+    # SourcesQuestionnaire before v0.23.x). The four pages capture
+    # the "which sensors do you own" answers. Downstream pages branch
+    # on ``self._netgate_choice`` / ``self._suricata_choice`` via
+    # :meth:`_is_page_relevant` to skip irrelevant credential screens.
     # ----------------------------------------------------------------
+
+    def _build_sources_netgate_page(self) -> None:
+        page, layout = self._scrollable_page()
+        layout.addSpacing(20)
+        layout.addWidget(TitleLabel("1 of 3 — Netgate pfSense"))
+        layout.addSpacing(8)
+        layout.addWidget(
+            BodyLabel(
+                "Do you have a Netgate pfSense (or any pfSense-based) "
+                "appliance on this LAN running Suricata?"
+            )
+        )
+        layout.addWidget(
+            BodyLabel(
+                "WardSOAR will read its EVE-JSON alert stream over SSH and "
+                "use the same channel to install firewall blocks via pfctl."
+            )
+        )
+
+        self._netgate_yes = RadioButton("Yes — connect to a Netgate / pfSense")
+        self._netgate_no = RadioButton("No — I do not have a Netgate / pfSense appliance")
+        self._netgate_yes.setChecked(self._netgate_choice)
+        self._netgate_no.setChecked(not self._netgate_choice)
+
+        group = QButtonGroup(page)
+        group.addButton(self._netgate_yes)
+        group.addButton(self._netgate_no)
+        self._netgate_yes.toggled.connect(self._on_netgate_changed)
+
+        layout.addSpacing(16)
+        layout.addWidget(self._netgate_yes)
+        layout.addWidget(self._netgate_no)
+        layout.addStretch(1)
+
+    def _build_sources_virus_sniff_page(self) -> None:
+        page, layout = self._scrollable_page()
+        layout.addSpacing(20)
+        layout.addWidget(TitleLabel("2 of 3 — Virus Sniff appliance"))
+        layout.addSpacing(8)
+        layout.addWidget(
+            BodyLabel(
+                "Do you have a Virus Sniff Raspberry-Pi diagnostic appliance "
+                "you plan to plug into this PC over USB?"
+            )
+        )
+        layout.addWidget(
+            BodyLabel(
+                "Virus Sniff is a portable single-PC sensor — Pi 5 + USB "
+                "gadget mode. Useful for laptops away from your LAN, or for "
+                "containment of a suspect PC. You can have one configured "
+                "alongside a Netgate, but only one runs at a time."
+            )
+        )
+
+        self._virus_sniff_yes = RadioButton("Yes — I have (or plan to have) a Virus Sniff")
+        self._virus_sniff_no = RadioButton("No — I do not have a Virus Sniff")
+        self._virus_sniff_yes.setChecked(self._virus_sniff_choice)
+        self._virus_sniff_no.setChecked(not self._virus_sniff_choice)
+
+        group = QButtonGroup(page)
+        group.addButton(self._virus_sniff_yes)
+        group.addButton(self._virus_sniff_no)
+        self._virus_sniff_yes.toggled.connect(self._on_virus_sniff_changed)
+
+        layout.addSpacing(16)
+        layout.addWidget(self._virus_sniff_yes)
+        layout.addWidget(self._virus_sniff_no)
+        layout.addStretch(1)
+
+    def _build_sources_suricata_page(self) -> None:
+        page, layout = self._scrollable_page()
+        layout.addSpacing(20)
+        layout.addWidget(TitleLabel("3 of 3 — Local Suricata"))
+        layout.addSpacing(8)
+        self._suricata_intro = BodyLabel("")
+        self._suricata_intro.setWordWrap(True)
+        layout.addWidget(self._suricata_intro)
+
+        layout.addWidget(
+            BodyLabel(
+                "Local Suricata covers loopback traffic and any VPN tunnel "
+                "the PC terminates — the Netgate cannot see those flows. It "
+                "needs Npcap (downloaded at first launch from npcap.com) and "
+                "uses Windows Firewall for blocking."
+            )
+        )
+
+        self._suricata_yes = RadioButton("Yes — install Suricata on this PC")
+        self._suricata_no = RadioButton("No — do not install Suricata locally")
+        self._suricata_yes.setChecked(self._suricata_choice)
+        self._suricata_no.setChecked(not self._suricata_choice)
+
+        group = QButtonGroup(page)
+        group.addButton(self._suricata_yes)
+        group.addButton(self._suricata_no)
+        self._suricata_yes.toggled.connect(self._on_suricata_changed)
+
+        layout.addSpacing(16)
+        layout.addWidget(self._suricata_yes)
+        layout.addWidget(self._suricata_no)
+        layout.addStretch(1)
+        self._refresh_suricata_intro()
+
+    def _build_sources_recap_page(self) -> None:
+        page, layout = self._scrollable_page()
+        layout.addSpacing(20)
+        layout.addWidget(TitleLabel("Recap"))
+        layout.addSpacing(8)
+        layout.addWidget(
+            BodyLabel(
+                "Review your choices below. Going Back lets you change "
+                "any answer; clicking Next continues with the detailed "
+                "configuration."
+            )
+        )
+
+        layout.addSpacing(8)
+        self._recap_text = TextEdit()
+        self._recap_text.setReadOnly(True)
+        self._recap_text.setMinimumHeight(140)
+        layout.addWidget(self._recap_text)
+
+        layout.addWidget(StrongBodyLabel("Coverage notes:"))
+        self._warnings_text = TextEdit()
+        self._warnings_text.setReadOnly(True)
+        self._warnings_text.setMinimumHeight(100)
+        layout.addWidget(self._warnings_text)
+
+        layout.addStretch(1)
+
+    def _on_netgate_changed(self, checked: bool) -> None:
+        self._netgate_choice = checked
+        self._refresh_suricata_intro()
+        self._update_nav()
+
+    def _on_virus_sniff_changed(self, checked: bool) -> None:
+        self._virus_sniff_choice = checked
+        self._refresh_suricata_intro()
+        self._update_nav()
+
+    def _on_suricata_changed(self, checked: bool) -> None:
+        self._suricata_choice = checked
+        # Sysmon-required wording on the Sysmon page depends on this
+        # answer; refresh it now so a Back/Next round trip is not
+        # required for the title to update.
+        self._refresh_sysmon_wording()
+        self._update_nav()
+
+    def _refresh_suricata_intro(self) -> None:
+        """Lock Suricata to Yes when both other sources are No.
+
+        Rule from the 2026-04-24 architecture decision: at least one
+        source is mandatory. If the operator just said No to Netgate
+        and No to Virus Sniff, local Suricata becomes the only
+        possible source — we force Yes and disable both radios so the
+        invariant cannot be violated by clicking Next.
+        """
+        only_local_possible = not self._netgate_choice and not self._virus_sniff_choice
+        if only_local_possible:
+            self._suricata_intro.setText(
+                "You answered No to both Netgate and Virus Sniff. Local "
+                "Suricata is the only remaining alert source, so it is "
+                "required for WardSOAR to start."
+            )
+            self._suricata_yes.setChecked(True)
+            self._suricata_yes.setEnabled(False)
+            self._suricata_no.setEnabled(False)
+            self._suricata_choice = True
+        else:
+            self._suricata_intro.setText(
+                "Local Suricata is recommended for laptops that move between "
+                "networks, or for full visibility into loopback and VPN "
+                "traffic. Skip it if your Netgate or Virus Sniff already "
+                "covers everything you care about."
+            )
+            self._suricata_yes.setEnabled(True)
+            self._suricata_no.setEnabled(True)
+
+    def _refresh_recap(self) -> None:
+        choices = SourceChoices(
+            netgate=self._netgate_choice,
+            virus_sniff=self._virus_sniff_choice,
+            suricata_local=self._suricata_choice,
+        )
+        lines = [
+            f"  Netgate pfSense:    {'YES' if choices.netgate else 'no'}",
+            f"  Virus Sniff (Pi):   {'YES' if choices.virus_sniff else 'no'}",
+            f"  Local Suricata:     {'YES' if choices.suricata_local else 'no'}",
+        ]
+        self._recap_text.setPlainText("\n".join(lines))
+        warnings = choices.coverage_warnings()
+        if warnings:
+            self._warnings_text.setPlainText("\n\n".join(f"- {w}" for w in warnings))
+        else:
+            self._warnings_text.setPlainText(
+                "No coverage gaps detected for the chosen combination."
+            )
+
+    def _refresh_sysmon_wording(self) -> None:
+        """Adjust the Sysmon page emphasis based on the local-Suricata choice.
+
+        When ``suricata_local`` is True the page title becomes
+        "strongly recommended" and an orange warning explains why
+        Sysmon matters more in the local topology. Next stays enabled
+        in both cases — the operator can install Sysmon later from
+        the Settings tab.
+
+        Defensive: ``_build_sysmon_page`` runs before
+        ``_build_sources_*_page`` only when the wizard is constructed
+        with explicit ``sources`` (legacy path). The attribute checks
+        below tolerate that ordering and the ``hasattr`` guard makes
+        the helper safe to call from anywhere in the lifecycle.
+        """
+        if not hasattr(self, "_sysmon_title") or not hasattr(self, "_sysmon_local_warning"):
+            return
+        if self._suricata_choice:
+            self._sysmon_title.setText("Install Sysmon (strongly recommended)")
+            self._sysmon_local_warning.setVisible(True)
+        else:
+            self._sysmon_title.setText("Install Sysmon (recommended)")
+            self._sysmon_local_warning.setVisible(False)
 
     def _build_welcome_page(self) -> None:
         """Page 0: Welcome."""
@@ -279,12 +572,31 @@ class SetupWizard(QDialog):
         page, layout = self._scrollable_page()
         layout.addSpacing(20)
 
-        title = TitleLabel("Install Sysmon (recommended)")
-        layout.addWidget(title)
+        self._sysmon_title = TitleLabel("Install Sysmon (recommended)")
+        layout.addWidget(self._sysmon_title)
         layout.addSpacing(8)
 
         subtitle = StrongBodyLabel("Required for reliable process attribution on alerts.")
         layout.addWidget(subtitle)
+
+        # Local-Suricata-only banner: visible orange warning shown
+        # when ``suricata_local`` is True, hidden otherwise. The text
+        # explains *why* Sysmon matters more in that topology — local
+        # alerts without Sysmon lose the program-attribution that is
+        # the whole point of running Suricata on the PC. Next remains
+        # enabled (option B from the design discussion); the operator
+        # can defer the install and configure it later from the
+        # Settings tab.
+        self._sysmon_local_warning = BodyLabel(
+            "Local Suricata is selected. Without Sysmon, alerts on this PC "
+            "will rarely be attributed to a specific program — you would lose "
+            "most of the value of running Suricata locally. Strongly "
+            "recommended to install it now."
+        )
+        self._sysmon_local_warning.setWordWrap(True)
+        self._sysmon_local_warning.setStyleSheet("color: #FFB74D;")
+        self._sysmon_local_warning.setVisible(False)
+        layout.addWidget(self._sysmon_local_warning)
         layout.addSpacing(12)
 
         desc = BodyLabel(
@@ -408,9 +720,7 @@ class SetupWizard(QDialog):
         auto_layout = QVBoxLayout(auto_card)
         auto_layout.setContentsMargins(16, 12, 16, 12)
         auto_layout.setSpacing(6)
-        auto_layout.addWidget(
-            StrongBodyLabel("\U0001f7e2  Active by default \u2014 no action needed")
-        )
+        auto_layout.addWidget(StrongBodyLabel("Active by default \u2014 no action needed"))
         auto_layout.addWidget(
             CaptionLabel(
                 f"{len(AUTO_ENABLED_SOURCES)} intelligence sources run automatically "
@@ -425,11 +735,11 @@ class SetupWizard(QDialog):
             header.setContentsMargins(0, 0, 0, 0)
             header.addWidget(BodyLabel(f"\u2705  {source.name}"), stretch=1)
             cadence = CaptionLabel(source.refresh_cadence)
-            cadence.setStyleSheet("color: #7a7a7a;")
+            cadence.setStyleSheet("color: #e4e4e4;")
             header.addWidget(cadence)
             row.addLayout(header)
             desc = CaptionLabel(f"    {source.description}")
-            desc.setStyleSheet("color: #5a5a5a;")
+            desc.setStyleSheet("color: #e4e4e4;")
             desc.setWordWrap(True)
             row.addWidget(desc)
             auto_layout.addLayout(row)
@@ -477,13 +787,13 @@ class SetupWizard(QDialog):
             header.addWidget(BodyLabel(label_text), stretch=1)
             if spec.pricing:
                 pricing = CaptionLabel(spec.pricing)
-                pricing.setStyleSheet("color: #7a7a7a;")
+                pricing.setStyleSheet("color: #e4e4e4;")
                 pricing.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 header.addWidget(pricing)
             entry.addLayout(header)
 
             desc = CaptionLabel(spec.description)
-            desc.setStyleSheet("color: #5a5a5a;")
+            desc.setStyleSheet("color: #e4e4e4;")
             desc.setWordWrap(True)
             entry.addWidget(desc)
 
@@ -701,14 +1011,14 @@ class SetupWizard(QDialog):
 
         layout.addSpacing(8)
         layout.addWidget(_field_label("Reconciliation window (seconds)"))
-        layout.addWidget(
-            CaptionLabel(
-                "How long the dual-source correlator waits for the second "
-                "Suricata to confirm a flow before flagging a divergence. "
-                "Only meaningful when Netgate is also enabled. Q1 doctrine: "
-                "120 s default, allowed band [30, 180]."
-            )
+        window_caption = CaptionLabel(
+            "How long the dual-source correlator waits for the second "
+            "Suricata to confirm a flow before flagging a divergence. "
+            "Only meaningful when Netgate is also enabled. Q1 doctrine: "
+            "120 s default, allowed band [30, 180]."
         )
+        window_caption.setWordWrap(True)
+        layout.addWidget(window_caption)
         self._fields["suricata_window_s"] = DoubleSpinBox()
         self._fields["suricata_window_s"].setRange(30.0, 180.0)
         self._fields["suricata_window_s"].setSingleStep(10.0)
@@ -717,14 +1027,14 @@ class SetupWizard(QDialog):
 
         layout.addSpacing(8)
         layout.addWidget(_field_label("Local subnets — extra CIDRs", optional=True))
-        layout.addWidget(
-            CaptionLabel(
-                "RFC1918 (10/8, 172.16/12, 192.168/16) is always treated "
-                "as LAN. Add operator-specific ranges here, one CIDR per "
-                "line, e.g. ``100.64.0.0/10`` for CGNAT or ``10.13.0.0/16`` "
-                "for a routed lab subnet."
-            )
+        subnets_caption = CaptionLabel(
+            "RFC1918 (10/8, 172.16/12, 192.168/16) is always treated "
+            "as LAN. Add operator-specific ranges here, one CIDR per "
+            "line, e.g. ``100.64.0.0/10`` for CGNAT or ``10.13.0.0/16`` "
+            "for a routed lab subnet."
         )
+        subnets_caption.setWordWrap(True)
+        layout.addWidget(subnets_caption)
         self._fields["suricata_local_subnets"] = TextEdit()
         self._fields["suricata_local_subnets"].setFixedHeight(80)
         layout.addWidget(self._fields["suricata_local_subnets"])
@@ -821,11 +1131,17 @@ class SetupWizard(QDialog):
 
         layout.addWidget(_field_label("Claude Model"))
         self._fields["model"] = ComboBox()
-        # v0.5 uses Opus exclusively. Older model IDs are kept for users who
-        # want to downgrade while the new pipeline beds in.
+        # Default = Opus 4.7 (top of the catalogue, best reasoning).
+        # Sonnet 4.6 and Haiku 4.5 are listed for operators who want to
+        # trade some accuracy for cost / latency. The legacy
+        # ``claude-opus-4-20250514`` snapshot stays at the bottom for
+        # downgrade scenarios while the new pipeline beds in. Update
+        # this list whenever Anthropic ships a new top-of-line model.
         self._fields["model"].addItems(
             [
                 "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5-20251001",
                 "claude-opus-4-20250514",
             ]
         )
@@ -1131,10 +1447,48 @@ class SetupWizard(QDialog):
         self._current_page = next_page
         self._stack.setCurrentIndex(self._current_page)
 
+        if self._current_page == PAGE_SOURCES_RECAP:
+            self._refresh_recap()
+        if self._current_page == PAGE_ANALYSIS:
+            self._refresh_claude_model_list()
         if self._current_page == PAGE_SUMMARY:
             self._update_summary()
 
         self._update_nav()
+
+    def _refresh_claude_model_list(self) -> None:
+        """Repopulate the Claude model dropdown from the live Anthropic API.
+
+        Called the first time the operator advances to the Analyzer
+        page, by which point the API key has already been entered on
+        the Keys page. Best-effort: any failure (no key, network down,
+        Anthropic schema drift) leaves the compiled-in default list
+        in place — see :func:`fetch_available_models` for the full
+        contract.
+
+        The current selection is preserved when possible — if the
+        dropdown previously showed ``claude-opus-4-7`` and the API
+        still lists that ID, the operator does not see their choice
+        reset. Otherwise the first ID returned by the API is selected
+        (Anthropic ranks them newest-first).
+        """
+        from wardsoar.core.anthropic_models import fetch_available_models
+
+        api_key_field = self._fields.get("anthropic_key")
+        if api_key_field is None:
+            return
+        api_key = api_key_field.text().strip()
+        if not api_key:
+            return
+        ids = fetch_available_models(api_key)
+        if not ids:
+            return
+        combo = self._fields["model"]
+        previous = combo.currentText()
+        combo.clear()
+        combo.addItems(ids)
+        if previous and previous in ids:
+            combo.setCurrentText(previous)
 
     def _go_back(self) -> None:
         """Go back to the previous page (skipping irrelevant pages)."""
@@ -1368,17 +1722,26 @@ class SetupWizard(QDialog):
             "replay": {"enabled": True, "decision_log_path": decision_log},
         }
 
-        # Persist the source-topology answers from the upstream
-        # SourcesQuestionnaire under a top-level ``sources`` key, so
-        # the runtime RemoteAgentRegistry knows which agents to
-        # instantiate. Skipped when no questionnaire ran (legacy /
-        # test paths) — the runtime defaults to "Netgate enabled" in
-        # that case for backward compatibility with pre-v0.22.20 configs.
+        # Persist the source-topology answers under a top-level
+        # ``sources`` key, so the runtime RemoteAgentRegistry knows
+        # which agents to instantiate. v0.23.x: the four source pages
+        # were inlined at the head of this wizard, so the answers
+        # always live on ``self._{netgate,virus_sniff,suricata}_choice``
+        # — no upstream questionnaire to gate the persistence on. The
+        # legacy ``self._sources`` argument is still honoured (for
+        # tests that pass an explicit ``SourceChoices``) and takes
+        # precedence when supplied.
         if self._sources is not None:
             config["sources"] = {
                 "netgate": self._sources.netgate,
                 "virus_sniff": self._sources.virus_sniff,
                 "suricata_local": self._sources.suricata_local,
+            }
+        else:
+            config["sources"] = {
+                "netgate": self._netgate_choice,
+                "virus_sniff": self._virus_sniff_choice,
+                "suricata_local": self._suricata_choice,
             }
 
         # Local-Suricata runtime configuration (Step 12 of

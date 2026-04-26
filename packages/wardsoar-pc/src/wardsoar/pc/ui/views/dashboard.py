@@ -1,8 +1,11 @@
-"""Dashboard tab — system status, metrics, health, and time-scaled charts.
+"""Dashboard tab — status banner + four time-scaled charts.
 
-Displays system status, key metrics (Alerts/Blocked), healthcheck grid,
-and four charts (Alerts, Verdicts, Blocked IPs, Top Source IPs) with
-selectable time scale: Minute, Hour, Day, Week, Month, Year.
+Top banner shows the current operational status and the Ward mode
+toggle; below it sit four charts (Alerts, Verdicts, Blocked IPs, Top
+Source IPs) with a selectable time scale: Minute, Hour, Day, Week,
+Month, Year. The previous left-hand stats column (Alerts Today,
+Blocked Today, System Health) was retired — System Health migrated to
+the dedicated System tab.
 
 Uses PyQt-Fluent-Widgets + PySide6 QtCharts.
 """
@@ -10,7 +13,7 @@ Uses PyQt-Fluent-Widgets + PySide6 QtCharts.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -28,18 +31,14 @@ from PySide6.QtGui import QColor, QCursor, QPainter
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
-    CaptionLabel,
     MessageBox,
     PushButton,
     SimpleCardWidget,
     SubtitleLabel,
-    TableWidget,
-    TitleLabel,
 )
 
 logger = logging.getLogger("ward_soar.ui.dashboard")
@@ -350,92 +349,7 @@ class DashboardView(QWidget):
         status_layout.addWidget(self._mode_btn)
         layout.addWidget(self._status_card)
 
-        # --- Main area: Left column + Charts ---
-        main_area = QHBoxLayout()
-        main_area.setSpacing(12)
-
-        # Left column: Alerts Today + Blocked Today + System Health
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
-
-        # Alerts Today card
-        self._alerts_card = SimpleCardWidget()
-        self._alerts_card.setFixedWidth(220)
-        alerts_layout = QVBoxLayout(self._alerts_card)
-        alerts_layout.setContentsMargins(16, 12, 16, 12)
-        self._alerts_value = TitleLabel("0")
-        self._alerts_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        alerts_layout.addWidget(self._alerts_value)
-        alerts_layout.addWidget(
-            CaptionLabel("Alerts Today"), alignment=Qt.AlignmentFlag.AlignCenter
-        )
-        left_col.addWidget(self._alerts_card)
-
-        # Blocked Today card
-        self._blocked_card = SimpleCardWidget()
-        self._blocked_card.setFixedWidth(220)
-        blocked_layout = QVBoxLayout(self._blocked_card)
-        blocked_layout.setContentsMargins(16, 12, 16, 12)
-        self._blocked_value = TitleLabel("0")
-        self._blocked_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        blocked_layout.addWidget(self._blocked_value)
-        blocked_layout.addWidget(
-            CaptionLabel("Blocked Today"), alignment=Qt.AlignmentFlag.AlignCenter
-        )
-        left_col.addWidget(self._blocked_card)
-
-        # Unexplained Divergences (24 h) card — Step 11 of
-        # project_dual_suricata_sync.md. Visible only when the
-        # dual-Suricata configuration is active; in single-source
-        # mode the card stays at zero (which is the correct
-        # answer — no divergence is even possible without two
-        # sources). Hidden by default until the first divergence
-        # to keep the dashboard clean for single-source operators.
-        self._divergence_card = SimpleCardWidget()
-        self._divergence_card.setFixedWidth(220)
-        divergence_layout = QVBoxLayout(self._divergence_card)
-        divergence_layout.setContentsMargins(16, 12, 16, 12)
-        self._divergence_value = TitleLabel("0")
-        self._divergence_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        divergence_layout.addWidget(self._divergence_value)
-        divergence_layout.addWidget(
-            CaptionLabel("Divergences 24 h"),
-            alignment=Qt.AlignmentFlag.AlignCenter,
-        )
-        self._divergence_card.setVisible(False)
-        left_col.addWidget(self._divergence_card)
-
-        # System Health card
-        health_card = SimpleCardWidget()
-        health_card.setFixedWidth(220)
-        health_layout = QVBoxLayout(health_card)
-        health_layout.setContentsMargins(12, 8, 12, 8)
-        health_layout.addWidget(CaptionLabel("System Health"))
-        self._health_table = TableWidget()
-        self._health_table.setColumnCount(2)
-        self._health_table.setHorizontalHeaderLabels(["Component", "Status"])
-        self._health_table.horizontalHeader().setStretchLastSection(True)
-        self._health_table.verticalHeader().setVisible(False)
-        self._health_table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
-        self._health_table.setShowGrid(False)
-        components = [
-            "pfSense SSH",
-            "Claude API",
-            "VirusTotal API",
-            "EVE JSON",
-            "Sysmon",
-            "Disk Space",
-        ]
-        self._health_table.setRowCount(len(components))
-        for i, comp in enumerate(components):
-            self._health_table.setItem(i, 0, QTableWidgetItem(comp))
-            self._health_table.setItem(i, 1, QTableWidgetItem("Unknown"))
-        health_layout.addWidget(self._health_table)
-        left_col.addWidget(health_card, stretch=1)
-
-        main_area.addLayout(left_col)
-
-        # --- Right side: scale buttons + charts ---
+        # --- Charts area: scale buttons + charts ---
         right_side = QVBoxLayout()
         right_side.setSpacing(8)
 
@@ -468,14 +382,6 @@ class DashboardView(QWidget):
         self._alert_records: list[tuple[datetime, str, str, bool]] = []
         self._ip_counts: dict[str, int] = defaultdict(int)
 
-        # Divergence rolling 24 h window (Step 11 of
-        # project_dual_suricata_sync.md). Each entry:
-        # (timestamp, explanation, is_unexplained). The card displays
-        # the count of entries with is_unexplained=True. Pruning
-        # happens on every record_divergence call rather than on a
-        # timer — same complexity, no extra timer plumbing.
-        self._divergence_records: deque[tuple[datetime, str, bool]] = deque()
-
         # Chart 1: Alerts
         self._alerts_chart = _create_dark_chart("Alerts (7 j)")
         self._alerts_chart.legend().setVisible(False)
@@ -507,8 +413,7 @@ class DashboardView(QWidget):
         charts_grid.addWidget(self._top_ips_view, 1, 1)
 
         right_side.addWidget(charts_widget, stretch=1)
-        main_area.addLayout(right_side, stretch=1)
-        layout.addLayout(main_area, stretch=1)
+        layout.addLayout(right_side, stretch=1)
 
         # Activity callback for forwarding to Activity tab
         self._activity_callback: Optional[Any] = None
@@ -819,80 +724,6 @@ class DashboardView(QWidget):
         self._alert_records.append((bucket_ts, src_ip, verdict, blocked))
         self._ip_counts[src_ip] += 1
         self._rebuild_all_charts()
-
-    def record_divergence(
-        self,
-        explanation: str,
-        is_unexplained: bool,
-        ts: Optional[datetime] = None,
-    ) -> None:
-        """Record one divergence event for the 24 h rolling counter.
-
-        Step 11 of ``project_dual_suricata_sync.md``: the dashboard
-        surface the count of *unexplained* divergences over the
-        last 24 hours. Benign-explained divergences (loopback / VPN /
-        LAN-only) are recorded too — only unexplained + suricata-dead
-        events drive the visible counter — but the deque holds them
-        all so a future audit panel can show the full breakdown.
-
-        Args:
-            explanation: One of ``"unexplained"``,
-                ``"suricata_local_dead"``, ``"loopback_traffic"``,
-                ``"vpn_traffic"``, ``"lan_only_traffic"``. Any other
-                value is accepted and stored verbatim — the dashboard
-                does not gatekeep new explanation tokens.
-            is_unexplained: ``True`` when the divergence drives a
-                verdict bump. The card counter increments by 1 for
-                every such entry. Per Q3 doctrine, this is True for
-                ``unexplained`` *and* ``suricata_local_dead``.
-            ts: Optional timestamp. Defaults to ``datetime.now`` (UTC).
-        """
-        now = ts if ts is not None else datetime.now(timezone.utc)
-        self._divergence_records.append((now, explanation, is_unexplained))
-
-        # Prune entries older than 24 h. The deque is kept in
-        # insertion order — pop from the front while too old.
-        cutoff = now - timedelta(hours=24)
-        while self._divergence_records and self._divergence_records[0][0] < cutoff:
-            self._divergence_records.popleft()
-
-        # Refresh the card. Counter shows ONLY unexplained-class
-        # entries — benign-explained divergences are noise to the
-        # operator and are excluded from the headline number.
-        unexplained_count = sum(
-            1 for (_, _expl, unexplained) in self._divergence_records if unexplained
-        )
-        self._divergence_value.setText(str(unexplained_count))
-
-        # First divergence of the run reveals the card. We test
-        # the explicit-hide bit (``isHidden``) rather than the
-        # parent-chain visibility (``isVisible``) so the reveal
-        # logic also works under unit tests that don't show the
-        # window.
-        if self._divergence_card.isHidden():
-            self._divergence_card.setVisible(True)
-
-    def update_metrics(self, metrics: dict[str, Any]) -> None:
-        """Update metric cards from engine data."""
-        self._alerts_value.setText(str(metrics.get("alerts_today", 0)))
-        self._blocked_value.setText(str(metrics.get("blocked_today", 0)))
-
-    def update_health(self, component: str, status: str) -> None:
-        """Update a single component health status."""
-        for row in range(self._health_table.rowCount()):
-            item = self._health_table.item(row, 0)
-            if item and item.text() == component:
-                status_item = QTableWidgetItem(status)
-                color_map = {
-                    "healthy": COLOR_GREEN,
-                    "degraded": COLOR_ORANGE,
-                    "failed": COLOR_RED,
-                }
-                fg = color_map.get(status.lower())
-                if fg:
-                    status_item.setForeground(fg)
-                self._health_table.setItem(row, 1, status_item)
-                break
 
     def set_status(self, status: str, mode: str) -> None:
         """Update the status banner and mode button.

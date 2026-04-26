@@ -32,6 +32,12 @@ from wardsoar.core.remote_agents import RemoteAgent
 from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 from wardsoar.core.trusted_temp import TrustedTempRegistry
 
+# Protect mode — minimum confidence on a CONFIRMED verdict to trigger
+# a block. Below this, the verdict is treated as too uncertain to act
+# on. Exposed as a config knob so the operator can dial the bar up
+# (fewer blocks, lower FP rate) or down (more blocks, lower FN rate).
+DEFAULT_PROTECT_CONFIDENCE_THRESHOLD = 0.70
+
 # Hard Protect — minimum confidence on a BENIGN verdict to skip the block.
 # Anything below blocks, even on BENIGN. Exposed as a config knob so the
 # operator can relax the bar (e.g. 0.95) if the false-positive rate is too
@@ -135,7 +141,7 @@ class ThreatResponder:
         ssh: RemoteAgent,
         tracker: BlockTracker,
         trusted_temp: Optional[TrustedTempRegistry] = None,
-        confidence_threshold: float = 0.7,
+        confidence_threshold: float = DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
         hard_protect_benign_threshold: float = DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
         cdn_allowlist: Optional["CdnAllowlist"] = None,
     ) -> None:
