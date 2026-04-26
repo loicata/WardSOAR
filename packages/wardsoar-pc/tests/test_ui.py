@@ -244,7 +244,7 @@ class TestActivityViewEventShape:
     * Engine doesn't emit a generic ``ALERT`` row on raw eve arrival.
     * Engine doesn't emit ``FILTERED`` / ``PIPELINE`` rows after
       pipeline completion (verified by inspecting the emit sites
-      indirectly via the on_ssh_line dispatcher).
+      indirectly via the on_alert_event dispatcher).
     * Healthy healthchecks are silenced — only degraded / failed
       get an Activity row.
     * The view's ``_rewrite_event`` still handles FILTERED / PIPELINE
@@ -252,11 +252,12 @@ class TestActivityViewEventShape:
       in depth).
     """
 
-    def test_no_alert_event_reaches_activity_from_raw_ssh_line(self, qapp: QApplication) -> None:
-        """Raw ``event_type: alert`` arriving from Suricata must not
-        produce an ALERT / FILTERED / PIPELINE row. The async
-        pipeline task is mocked so we can assert purely on the
-        dispatcher's synchronous emissions."""
+    def test_no_alert_event_reaches_activity_from_parsed_event(self, qapp: QApplication) -> None:
+        """A parsed ``event_type: alert`` flowing through the agent
+        stream consumer (Phase 3b.5) must not produce an ALERT /
+        FILTERED / PIPELINE row in Activity. The async pipeline task
+        is mocked so we can assert purely on the dispatcher's
+        synchronous emissions."""
         from unittest.mock import MagicMock
 
         from wardsoar.pc.ui.engine_bridge import EngineWorker
@@ -272,19 +273,24 @@ class TestActivityViewEventShape:
         )
         emitted: list[tuple[str, str, str]] = []
         worker.activity_logged.connect(lambda t, e, d: emitted.append((t, e, d)))
-        # Fake event loop on the PipelineController (V3.5: the loop
-        # moved off EngineWorker into the controller). The mock makes
-        # ``loop.is_running()`` truthy so ``on_ssh_line`` schedules
-        # the call instead of silently dropping it.
+        # Fake event loop on the PipelineController. The mock makes
+        # ``loop.is_running()`` truthy so ``on_alert_event`` schedules
+        # the dispatch instead of silently dropping it.
         worker._pipeline_controller._loop = MagicMock()
         worker._pipeline_controller._loop.create_task = MagicMock()
 
-        alert_line = (
-            '{"event_type": "alert", "src_ip": "1.2.3.4", '
-            '"dest_ip": "5.6.7.8", "alert": {"signature_id": 2210054, '
-            '"signature": "TEST", "severity": 3, "category": "test"}}'
-        )
-        worker.on_ssh_line(alert_line)
+        alert_event = {
+            "event_type": "alert",
+            "src_ip": "1.2.3.4",
+            "dest_ip": "5.6.7.8",
+            "alert": {
+                "signature_id": 2210054,
+                "signature": "TEST",
+                "severity": 3,
+                "category": "test",
+            },
+        }
+        worker.on_alert_event(alert_event)
 
         # No per-alert events should reach Activity: not ALERT
         # (removed in 0.8.6) nor FILTERED / PIPELINE (removed in B2).

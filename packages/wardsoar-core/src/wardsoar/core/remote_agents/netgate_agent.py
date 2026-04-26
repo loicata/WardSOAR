@@ -59,12 +59,18 @@ class NetgateAgent:
         ssh_key_path: str,
         ssh_port: int = 22,
         blocklist_table: str = "blocklist",
+        eve_path: str = "/var/log/suricata/eve.json",
+        local_bind_addr: str = "",
     ) -> NetgateAgent:
         """Build the SSH transport and return a ready-to-use agent.
 
         This is the path most call sites should take; the explicit
         ``__init__`` form exists for tests that need to inject a mock
         transport.
+
+        ``eve_path`` and ``local_bind_addr`` configure live streaming
+        via :meth:`stream_alerts` — see :class:`PfSenseSSH` for the
+        rationale on each.
         """
         return cls(
             PfSenseSSH(
@@ -73,6 +79,8 @@ class NetgateAgent:
                 ssh_key_path=ssh_key_path,
                 ssh_port=ssh_port,
                 blocklist_table=blocklist_table,
+                eve_path=eve_path,
+                local_bind_addr=local_bind_addr,
             )
         )
 

@@ -43,10 +43,6 @@ _SSH_RETRY_BASE_DELAY_S: float = 1.0  # 1s, 2s backoff
 # must absorb pfSense reloads / network blips without busy-looping.
 _STREAM_MIN_RETRY_DELAY_S: float = 2.0
 _STREAM_MAX_RETRY_DELAY_S: float = 60.0
-# Default path of the EVE JSON file on a vanilla pfSense + Suricata
-# install. Override per-call via ``stream_alerts(remote_eve_path=…)``
-# when the operator points Suricata at a custom location.
-_DEFAULT_EVE_PATH: str = "/var/log/suricata/eve.json"
 
 
 class PfSenseSSH:
@@ -61,6 +57,16 @@ class PfSenseSSH:
         ssh_key_path: Path to SSH private key file.
         ssh_port: SSH port (default 22).
         blocklist_table: pf table name for blocked IPs.
+        eve_path: Path of the Suricata EVE JSON file on the pfSense
+            appliance. The default works for a vanilla install; the
+            user's setup may have an interface-suffixed path like
+            ``/var/log/suricata/suricata_igc252678/eve.json``. Used by
+            :meth:`stream_alerts`.
+        local_bind_addr: Local IP to bind the outbound SSH connection
+            to. Useful when the operator's PC is on a VPN that would
+            otherwise route LAN traffic through the tunnel and break
+            SSH to the local appliance. Empty string means OS default
+            routing. Used by :meth:`stream_alerts`.
     """
 
     def __init__(
@@ -70,12 +76,16 @@ class PfSenseSSH:
         ssh_key_path: str,
         ssh_port: int = 22,
         blocklist_table: str = "blocklist",
+        eve_path: str = "/var/log/suricata/eve.json",
+        local_bind_addr: str = "",
     ) -> None:
         self._host = host
         self._user = ssh_user
         self._key_path = ssh_key_path
         self._port = ssh_port
         self._table = blocklist_table
+        self._eve_path = eve_path
+        self._local_bind_addr = local_bind_addr
         # Serialises add/remove on the shared alias file. Two concurrent
         # writers racing on /var/db/aliastables/wardsoar_blocklist.txt.tmp
         # caused the 2026-04-23 22:40 incident where the second mv landed
@@ -331,19 +341,16 @@ class PfSenseSSH:
             "PfSenseSSH does not co-reside with the target host — kill skipped"
         )
 
-    async def stream_alerts(
-        self,
-        remote_eve_path: str = _DEFAULT_EVE_PATH,
-        local_addr: str = "",
-    ) -> AsyncIterator[dict[str, Any]]:
+    async def stream_alerts(self) -> AsyncIterator[dict[str, Any]]:
         """Stream Suricata EVE JSON events from pfSense via SSH+``tail -f``.
 
         Opens a long-lived SSH session (separate from the per-command
         sessions used by :meth:`_run_cmd`), runs ``tail -n 0 -f`` on
-        ``remote_eve_path``, parses each line as JSON, and yields the
-        resulting dict to the consumer. Non-JSON lines are dropped
-        silently — pfSense occasionally interleaves daemon notices or
-        truncated writes that have no business reaching the pipeline.
+        the ``eve_path`` set at construction time, parses each line as
+        JSON, and yields the resulting dict to the consumer. Non-JSON
+        lines are dropped silently — pfSense occasionally interleaves
+        daemon notices or truncated writes that have no business
+        reaching the pipeline.
 
         Reconnection: on any transport error (connection lost, timeout,
         appliance reload), the session is closed and a new one opened
@@ -352,14 +359,10 @@ class PfSenseSSH:
         consumer — the only way out is the consumer breaking the
         ``async for`` loop or calling ``aclose()``.
 
-        Args:
-            remote_eve_path: Path of the EVE JSON file on the pfSense
-                appliance. Defaults to ``/var/log/suricata/eve.json``.
-            local_addr: Local IP address to bind the outbound SSH
-                connection to. Useful when the operator's PC is on a
-                VPN that would otherwise route LAN traffic through the
-                tunnel, breaking SSH to the local appliance. Empty
-                string means OS default routing.
+        The EVE path and local bind address are configured at
+        :class:`PfSenseSSH` construction; the Protocol method takes no
+        arguments so every consumer (NetgateAgent, future VsAgent,
+        AgentStreamConsumer) calls a single uniform shape.
 
         Yields:
             Parsed EVE JSON event dictionaries — typically with
@@ -370,9 +373,9 @@ class PfSenseSSH:
         # ``cmd`` is constructed from a single hard-coded literal plus
         # a path that the operator controls via the wizard / config —
         # not a network-supplied string. Quoting the path defensively
-        # so a future migration to user-editable paths cannot turn an
-        # accidental shell metachar into command injection.
-        quoted_path = remote_eve_path.replace("'", "'\\''")
+        # so an accidental shell metachar in a custom path cannot turn
+        # into command injection.
+        quoted_path = self._eve_path.replace("'", "'\\''")
         cmd = f"tail -n 0 -f '{quoted_path}'"
 
         while True:
@@ -383,8 +386,8 @@ class PfSenseSSH:
                 "client_keys": [self._key_path],
                 "known_hosts": None,
             }
-            if local_addr:
-                connect_kwargs["local_addr"] = (local_addr, 0)
+            if self._local_bind_addr:
+                connect_kwargs["local_addr"] = (self._local_bind_addr, 0)
 
             try:
                 async with asyncssh.connect(  # nosec B507 — local network appliance

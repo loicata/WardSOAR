@@ -164,7 +164,6 @@ a = Analysis(
         "wardsoar.core.remote_agents.pfsense_aliastable",
         "wardsoar.core.remote_agents.pfsense_alias_migrate",
         "wardsoar.core.remote_agents.pfsense_suricata_tune",
-        "wardsoar.pc.ui.ssh_streamer",
         # --------------------------------------------------------------
         # wardsoar-pc (Windows-only desktop stack)
         # --------------------------------------------------------------
@@ -202,6 +201,7 @@ a = Analysis(
         "wardsoar.pc.forensic.timeline",
         # UI (PySide6 + qfluentwidgets)
         "wardsoar.pc.ui",
+        "wardsoar.pc.ui.agent_stream_consumer",
         "wardsoar.pc.ui.app",
         "wardsoar.pc.ui.engine_bridge",
         "wardsoar.pc.ui.setup_wizard",

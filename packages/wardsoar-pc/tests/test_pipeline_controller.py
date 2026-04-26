@@ -164,29 +164,30 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# on_ssh_line — cross-thread entry point
+# on_alert_event — cross-thread entry point (Phase 3b.5)
 # ---------------------------------------------------------------------------
 
 
-class TestOnSshLine:
-    def test_loop_none_silently_drops_line(self, qapp: QApplication, tmp_path: Path) -> None:
+class TestOnAlertEvent:
+    def test_loop_none_silently_drops_event(self, qapp: QApplication, tmp_path: Path) -> None:
         controller = _make_controller(tmp_path)
         # Must not raise even though the loop is None.
-        controller.on_ssh_line('{"event_type": "alert"}')
+        controller.on_alert_event({"event_type": "alert"})
 
-    def test_loop_running_schedules_process_line(self, qapp: QApplication, tmp_path: Path) -> None:
+    def test_loop_running_schedules_dispatch(self, qapp: QApplication, tmp_path: Path) -> None:
         loop = MagicMock()
         loop.is_running = MagicMock(return_value=True)
         controller = _make_controller(tmp_path)
         controller._loop = loop  # noqa: SLF001
 
-        controller.on_ssh_line("some-line")
+        event = {"event_type": "alert", "src_ip": "203.0.113.7"}
+        controller.on_alert_event(event)
 
         loop.call_soon_threadsafe.assert_called_once_with(
-            controller._process_line, "some-line"  # noqa: SLF001
+            controller._dispatch_event, event  # noqa: SLF001
         )
 
-    def test_loop_present_but_not_running_drops_line(
+    def test_loop_present_but_not_running_drops_event(
         self, qapp: QApplication, tmp_path: Path
     ) -> None:
         loop = MagicMock()
@@ -194,7 +195,7 @@ class TestOnSshLine:
         controller = _make_controller(tmp_path)
         controller._loop = loop  # noqa: SLF001
 
-        controller.on_ssh_line("some-line")
+        controller.on_alert_event({"event_type": "alert"})
         loop.call_soon_threadsafe.assert_not_called()
 
 

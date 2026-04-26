@@ -44,7 +44,8 @@ from qfluentwidgets import (
 
 from wardsoar.core.config import get_app_dir, get_data_dir, load_config, load_env, load_whitelist
 from wardsoar.pc.main import Pipeline
-from wardsoar.pc.ui.ssh_streamer import SshStreamer
+from wardsoar.core.remote_agents import NetgateAgent
+from wardsoar.pc.ui.agent_stream_consumer import AgentStreamConsumer
 from wardsoar.pc.ui.engine_bridge import EngineWorker
 from wardsoar.pc.ui.views.activity_view import ActivityView
 from wardsoar.pc.ui.views.alerts import AlertsView
@@ -649,17 +650,26 @@ class WardApp:
 
             self._engine.start()
 
-            # Start SSH streamer if in SSH mode
-            self._ssh_streamer: Optional[SshStreamer] = None
+            # Start agent-driven alert stream consumer if in SSH mode.
+            # Phase 3b.5: replaces the direct ``SshStreamer`` instantiation
+            # with a ``RemoteAgent`` whose ``stream_alerts()`` is consumed
+            # uniformly. Today only ``NetgateAgent`` is wired; a future
+            # ``VsAgent`` (Virus Sniff RPi) plugs in identically.
+            self._stream_consumer: Optional[AgentStreamConsumer] = None
             if watcher_mode == "ssh":
-                self._start_ssh_streamer(config, dashboard)
+                self._start_alert_stream_consumer(config, dashboard)
 
             logger.info("Engine worker started (mode: %s)", watcher_mode)
         except (FileNotFoundError, ValueError) as exc:
             logger.error("Failed to start engine: %s", exc)
 
-    def _start_ssh_streamer(self, config: Any, dashboard: Any) -> None:
-        """Start SSH streamer to receive EVE JSON from pfSense.
+    def _start_alert_stream_consumer(self, config: Any, dashboard: Any) -> None:
+        """Start the agent-driven EVE event consumer for SSH-source mode.
+
+        Builds a :class:`NetgateAgent` from the operator's config and
+        spawns an :class:`AgentStreamConsumer` to feed parsed events
+        into ``EngineWorker.on_alert_event``. Reconnection is owned by
+        the agent (see :meth:`PfSenseSSH.stream_alerts`).
 
         Args:
             config: Application configuration.
@@ -679,21 +689,26 @@ class WardApp:
             "/var/log/suricata/suricata_igc252678/eve.json",
         )
 
-        self._ssh_streamer = SshStreamer(
-            pfsense_ip=pfsense_ip,
+        agent = NetgateAgent.from_credentials(
+            host=pfsense_ip,
             ssh_user=ssh_user,
             ssh_key_path=ssh_key_path,
             ssh_port=ssh_port,
-            remote_eve_path=remote_eve_path,
-            local_addr=pc_ip,
+            eve_path=remote_eve_path,
+            local_bind_addr=pc_ip,
         )
 
-        # Connect SSH lines to engine for processing
-        self._ssh_streamer.line_received.connect(self._engine.on_ssh_line)
-        self._ssh_streamer.status_changed.connect(dashboard.add_ssh_status)
+        self._stream_consumer = AgentStreamConsumer(agent)
+        # Connect parsed EVE events to the engine for dispatch.
+        self._stream_consumer.event_received.connect(self._engine.on_alert_event)
+        self._stream_consumer.status_changed.connect(dashboard.add_ssh_status)
 
-        self._ssh_streamer.start()
-        logger.info("SSH streamer started: %s@%s", ssh_user, pfsense_ip)
+        self._stream_consumer.start()
+        logger.info(
+            "AgentStreamConsumer started: %s@%s (agent=NetgateAgent)",
+            ssh_user,
+            pfsense_ip,
+        )
 
     def _on_alert_for_charts(self, alert_data: dict[str, Any]) -> None:
         """Feed alert data to dashboard charts.
@@ -1205,9 +1220,9 @@ class WardApp:
 
     def _quit(self) -> None:
         """Quit the application."""
-        if hasattr(self, "_ssh_streamer") and self._ssh_streamer is not None:
-            self._ssh_streamer.stop()
-            self._ssh_streamer.wait(3000)
+        if hasattr(self, "_stream_consumer") and self._stream_consumer is not None:
+            self._stream_consumer.stop()
+            self._stream_consumer.wait(3000)
         if hasattr(self, "_engine"):
             self._engine.stop()
             self._engine.wait(3000)

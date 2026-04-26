@@ -270,11 +270,17 @@ class TestPfSenseSSHStreamAlerts:
         assert mock_asyncssh.connect.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_local_addr_is_forwarded_to_asyncssh(self) -> None:
-        """When the operator supplies a ``local_addr`` (LAN IP to bind to,
-        e.g. to bypass a VPN tunnel), it must reach ``asyncssh.connect``
-        as the documented ``(addr, port)`` tuple."""
-        ssh = _make_ssh()
+    async def test_local_bind_addr_is_forwarded_to_asyncssh(self) -> None:
+        """When the operator configures ``local_bind_addr`` at construction
+        (LAN IP to bind to, e.g. to bypass a VPN tunnel), it must reach
+        ``asyncssh.connect`` as the documented ``(addr, port)`` tuple
+        on every reconnect attempt."""
+        ssh = PfSenseSSH(
+            host="192.168.2.1",
+            ssh_user="admin",
+            ssh_key_path="/tmp/test_key",
+            local_bind_addr="192.168.2.100",
+        )
 
         mock_process = MagicMock()
         mock_process.stdout = _AsyncIterLines(['{"k": 1}\n'])
@@ -289,11 +295,47 @@ class TestPfSenseSSHStreamAlerts:
 
         with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
             mock_asyncssh.connect.return_value = conn_cm
-            async for _event in ssh.stream_alerts(local_addr="192.168.2.100"):  # type: ignore[union-attr]
+            async for _event in ssh.stream_alerts():
                 break
 
         kwargs = mock_asyncssh.connect.call_args.kwargs
         assert kwargs["local_addr"] == ("192.168.2.100", 0)
+
+    @pytest.mark.asyncio
+    async def test_custom_eve_path_is_used_in_tail_command(self) -> None:
+        """The operator's pfSense may put eve.json under an
+        interface-suffixed directory (e.g. when Suricata is
+        per-interface). The ``eve_path`` constructor arg threads
+        through to the ``tail -f`` command literally, with single-quote
+        escaping for safety. Consumer breaks on first event so the
+        generator's ``aclose()`` is invoked cleanly — avoids a
+        reconnect loop on empty stdout."""
+        custom_path = "/var/log/suricata/suricata_igc252678/eve.json"
+        ssh = PfSenseSSH(
+            host="192.168.2.1",
+            ssh_user="admin",
+            ssh_key_path="/tmp/test_key",
+            eve_path=custom_path,
+        )
+
+        mock_process = MagicMock()
+        mock_process.stdout = _AsyncIterLines(['{"event_type": "alert"}\n'])
+        process_cm = AsyncMock()
+        process_cm.__aenter__ = AsyncMock(return_value=mock_process)
+        process_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_conn = MagicMock()
+        mock_conn.create_process = MagicMock(return_value=process_cm)
+        conn_cm = AsyncMock()
+        conn_cm.__aenter__ = AsyncMock(return_value=mock_conn)
+        conn_cm.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("wardsoar.core.remote_agents.pfsense_ssh.asyncssh") as mock_asyncssh:
+            mock_asyncssh.connect.return_value = conn_cm
+            async for _event in ssh.stream_alerts():
+                break  # one event is enough — aclose() the generator now
+
+        cmd = mock_conn.create_process.call_args[0][0]
+        assert custom_path in cmd
 
 
 class TestPfSenseSSHBlocklist:

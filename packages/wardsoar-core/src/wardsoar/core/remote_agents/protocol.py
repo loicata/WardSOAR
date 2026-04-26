@@ -156,11 +156,8 @@ class RemoteAgent(Protocol):
 
         Returns:
             An async iterator of parsed EVE JSON events. The pipeline
-            consumes it as ``async for event in agent.stream_alerts():``.
-
-        Note:
-            The current pipeline still consumes a Qt-based ``SshStreamer``
-            in the UI layer — the migration of that call site to consume
-            this Protocol method is tracked separately (Phase 3b.5).
+            consumes it as ``async for event in agent.stream_alerts():``
+            via :class:`AgentStreamConsumer` (Phase 3b.5 — replaced the
+            legacy Qt-based ``SshStreamer``).
         """
         ...

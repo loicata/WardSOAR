@@ -263,16 +263,18 @@ class PipelineController(QObject):
         if self._loop is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
 
-    def on_ssh_line(self, line: str) -> None:
-        """Process a line received from the SSH streamer (cross-thread safe).
+    def on_alert_event(self, event: dict[str, Any]) -> None:
+        """Receive a parsed EVE event from a :class:`RemoteAgent` stream.
 
-        The streamer runs in its own thread (``asyncssh`` task on
-        the streamer's loop). We marshal back onto our own loop
-        via ``call_soon_threadsafe`` so :meth:`_process_line`
-        always runs in the same context as ``_process_alert_async``.
+        Called from the :class:`AgentStreamConsumer` thread (Phase 3b.5
+        replacement for the legacy :meth:`on_ssh_line` raw-line entry).
+        The agent has already parsed the JSON line into a dict, so we
+        skip the JSON-decode pass and dispatch directly. Cross-thread
+        marshalling to the controller's asyncio loop keeps the event
+        on the same context as :meth:`_process_alert_async`.
         """
         if self._loop is not None and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._process_line, line)
+            self._loop.call_soon_threadsafe(self._dispatch_event, event)
 
     # ------------------------------------------------------------------
     # Background tasks
@@ -411,12 +413,25 @@ class PipelineController(QObject):
             self._process_line(stripped)
 
     def _process_line(self, line: str) -> None:
-        """Parse a single EVE JSON line and schedule pipeline processing."""
+        """Parse a single EVE JSON line and schedule pipeline processing.
+
+        Used by the file-watcher path (:meth:`_process_new_lines`) which
+        reads raw bytes off disk. The SSH path now goes through
+        :meth:`on_alert_event` with an already-parsed dict.
+        """
         try:
             raw_event: dict[str, Any] = json.loads(line)
         except json.JSONDecodeError:
             return
+        self._dispatch_event(raw_event)
 
+    def _dispatch_event(self, raw_event: dict[str, Any]) -> None:
+        """Activity-log network events; route alerts to the async pipeline.
+
+        Shared dispatch point used by both the file-poll path
+        (:meth:`_process_line` after JSON parse) and the agent-stream
+        path (:meth:`on_alert_event`, already parsed by the agent).
+        """
         event_type = raw_event.get("event_type", "")
 
         # Log network event types as activity.

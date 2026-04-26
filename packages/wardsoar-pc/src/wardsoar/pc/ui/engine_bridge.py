@@ -188,9 +188,13 @@ class EngineWorker(QThread):
         """Stop the worker — thread-safe, callable from the main thread."""
         self._pipeline_controller.request_stop()
 
-    def on_ssh_line(self, line: str) -> None:
-        """Process a line received from the SSH streamer (cross-thread safe)."""
-        self._pipeline_controller.on_ssh_line(line)
+    def on_alert_event(self, event: dict[str, Any]) -> None:
+        """Receive a parsed EVE event from an :class:`AgentStreamConsumer`.
+
+        Cross-thread safe — :meth:`PipelineController.on_alert_event`
+        marshals the event onto its own asyncio loop before dispatching.
+        """
+        self._pipeline_controller.on_alert_event(event)
 
     # ------------------------------------------------------------------
     # Netgate façade — delegates to :class:`NetgateController` (V3.3).
