@@ -10,7 +10,7 @@ Uses PyQt-Fluent-Widgets + PySide6 QtCharts.
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -384,6 +384,27 @@ class DashboardView(QWidget):
         )
         left_col.addWidget(self._blocked_card)
 
+        # Unexplained Divergences (24 h) card — Step 11 of
+        # project_dual_suricata_sync.md. Visible only when the
+        # dual-Suricata configuration is active; in single-source
+        # mode the card stays at zero (which is the correct
+        # answer — no divergence is even possible without two
+        # sources). Hidden by default until the first divergence
+        # to keep the dashboard clean for single-source operators.
+        self._divergence_card = SimpleCardWidget()
+        self._divergence_card.setFixedWidth(220)
+        divergence_layout = QVBoxLayout(self._divergence_card)
+        divergence_layout.setContentsMargins(16, 12, 16, 12)
+        self._divergence_value = TitleLabel("0")
+        self._divergence_value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        divergence_layout.addWidget(self._divergence_value)
+        divergence_layout.addWidget(
+            CaptionLabel("Divergences 24 h"),
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        self._divergence_card.setVisible(False)
+        left_col.addWidget(self._divergence_card)
+
         # System Health card
         health_card = SimpleCardWidget()
         health_card.setFixedWidth(220)
@@ -446,6 +467,14 @@ class DashboardView(QWidget):
         # Alert data: list of (timestamp, src_ip, verdict, blocked)
         self._alert_records: list[tuple[datetime, str, str, bool]] = []
         self._ip_counts: dict[str, int] = defaultdict(int)
+
+        # Divergence rolling 24 h window (Step 11 of
+        # project_dual_suricata_sync.md). Each entry:
+        # (timestamp, explanation, is_unexplained). The card displays
+        # the count of entries with is_unexplained=True. Pruning
+        # happens on every record_divergence call rather than on a
+        # timer — same complexity, no extra timer plumbing.
+        self._divergence_records: deque[tuple[datetime, str, bool]] = deque()
 
         # Chart 1: Alerts
         self._alerts_chart = _create_dark_chart("Alerts (7 j)")
@@ -790,6 +819,58 @@ class DashboardView(QWidget):
         self._alert_records.append((bucket_ts, src_ip, verdict, blocked))
         self._ip_counts[src_ip] += 1
         self._rebuild_all_charts()
+
+    def record_divergence(
+        self,
+        explanation: str,
+        is_unexplained: bool,
+        ts: Optional[datetime] = None,
+    ) -> None:
+        """Record one divergence event for the 24 h rolling counter.
+
+        Step 11 of ``project_dual_suricata_sync.md``: the dashboard
+        surface the count of *unexplained* divergences over the
+        last 24 hours. Benign-explained divergences (loopback / VPN /
+        LAN-only) are recorded too — only unexplained + suricata-dead
+        events drive the visible counter — but the deque holds them
+        all so a future audit panel can show the full breakdown.
+
+        Args:
+            explanation: One of ``"unexplained"``,
+                ``"suricata_local_dead"``, ``"loopback_traffic"``,
+                ``"vpn_traffic"``, ``"lan_only_traffic"``. Any other
+                value is accepted and stored verbatim — the dashboard
+                does not gatekeep new explanation tokens.
+            is_unexplained: ``True`` when the divergence drives a
+                verdict bump. The card counter increments by 1 for
+                every such entry. Per Q3 doctrine, this is True for
+                ``unexplained`` *and* ``suricata_local_dead``.
+            ts: Optional timestamp. Defaults to ``datetime.now`` (UTC).
+        """
+        now = ts if ts is not None else datetime.now(timezone.utc)
+        self._divergence_records.append((now, explanation, is_unexplained))
+
+        # Prune entries older than 24 h. The deque is kept in
+        # insertion order — pop from the front while too old.
+        cutoff = now - timedelta(hours=24)
+        while self._divergence_records and self._divergence_records[0][0] < cutoff:
+            self._divergence_records.popleft()
+
+        # Refresh the card. Counter shows ONLY unexplained-class
+        # entries — benign-explained divergences are noise to the
+        # operator and are excluded from the headline number.
+        unexplained_count = sum(
+            1 for (_, _expl, unexplained) in self._divergence_records if unexplained
+        )
+        self._divergence_value.setText(str(unexplained_count))
+
+        # First divergence of the run reveals the card. We test
+        # the explicit-hide bit (``isHidden``) rather than the
+        # parent-chain visibility (``isVisible``) so the reveal
+        # logic also works under unit tests that don't show the
+        # window.
+        if self._divergence_card.isHidden():
+            self._divergence_card.setVisible(True)
 
     def update_metrics(self, metrics: dict[str, Any]) -> None:
         """Update metric cards from engine data."""

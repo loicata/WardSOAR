@@ -661,6 +661,25 @@ class PipelineController(QObject):
             ),
         )
 
+        # Dual-source corroboration surface (Step 11 of
+        # project_dual_suricata_sync.md). Hoisted to the top-level
+        # ``alert_data`` so the Activity tab and Dashboard widget
+        # do not need to dig into ``_full`` — the serialised
+        # DecisionRecord is the source of truth, but the UI hot
+        # path stays cheap.
+        corroboration_value: str | None = (
+            record.source_corroboration.value if record.source_corroboration else None
+        )
+        divergence_explanation: str | None = (
+            record.divergence_findings.explanation if record.divergence_findings else None
+        )
+        divergence_unexplained: bool = bool(
+            record.divergence_findings is not None and not record.divergence_findings.is_explained
+        )
+        verdict_pre_bump_value: str | None = (
+            record.verdict_pre_bump.value if record.verdict_pre_bump else None
+        )
+
         # Emit alert for UI.
         alert_data = {
             "time": record.alert.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
@@ -679,6 +698,11 @@ class PipelineController(QObject):
             "reasoning": reasoning,
             "actions": [a.action_type.value for a in record.actions_taken],
             "pipeline_ms": str(record.pipeline_duration_ms),
+            # Step 11 — dual-source corroboration surface.
+            "source_corroboration": corroboration_value,
+            "divergence_explanation": divergence_explanation,
+            "divergence_unexplained": divergence_unexplained,
+            "verdict_pre_bump": verdict_pre_bump_value,
             # v0.9.0 — full DecisionRecord serialised for the
             # detail view. The alerts-list render path ignores
             # this key (backward compat), and

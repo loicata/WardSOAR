@@ -1004,6 +1004,45 @@ class WardApp:
             ts=ts_value,
         )
 
+        # Step 11 of project_dual_suricata_sync.md — surface the
+        # divergence on the dashboard's 24 h counter and on the
+        # Activity tab. Only fires when the pipeline_controller
+        # observed a divergent corroboration (DIVERGENCE_A / B);
+        # for SINGLE_SOURCE / MATCH_CONFIRMED / etc. the alert
+        # carries None tags and we skip both.
+        corroboration = alert_data.get("source_corroboration")
+        if corroboration in ("divergence_a", "divergence_b"):
+            explanation = alert_data.get("divergence_explanation") or "unexplained"
+            is_unexplained = bool(alert_data.get("divergence_unexplained", False)) or (
+                explanation == "suricata_local_dead"
+            )
+            try:
+                self._window._dashboard.record_divergence(
+                    explanation=str(explanation),
+                    is_unexplained=is_unexplained,
+                    ts=ts_value,
+                )
+            except Exception:  # noqa: BLE001 — UI surface must never crash the engine
+                logger.debug("dashboard.record_divergence raised", exc_info=True)
+
+            # Activity tab annotation. The Dashboard fans every
+            # add_activity call out to the Activity tab via its
+            # registered callback (see __init__ wiring). The
+            # ``_rewrite_event`` formatter knows about the
+            # ``DIVERGENCE`` event and renders the right icon /
+            # color tier based on the explanation.
+            time_str = alert_data.get("time") or (
+                ts_value.strftime("%Y-%m-%d %H:%M:%S") if ts_value else ""
+            )
+            try:
+                self._window._dashboard.add_activity(
+                    time_str,
+                    "DIVERGENCE",
+                    str(explanation),
+                )
+            except Exception:  # noqa: BLE001 — UI surface must never crash
+                logger.debug("dashboard.add_activity (DIVERGENCE) raised", exc_info=True)
+
     def _on_rollback_completed(self, payload: dict[str, Any]) -> None:
         """Log the rollback outcome on the dashboard activity feed.
 

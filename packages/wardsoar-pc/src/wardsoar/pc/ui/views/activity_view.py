@@ -90,6 +90,41 @@ def _rewrite_event(event: str, details: str) -> tuple[str, str, QColor | None]:
     if event_upper == "ALERT":
         return "IDS Alert", details, QColor(255, 152, 0)
 
+    if event_upper == "DIVERGENCE":
+        # Step 11 of project_dual_suricata_sync.md. The pipeline
+        # tags two-source disagreements that reached stage 0.5;
+        # ``details`` is the explanation token from the
+        # DivergenceInvestigator. Three visual classes drive the
+        # operator's eye:
+        #   * benign-explained (loopback / VPN / LAN-only)
+        #     -> info blue, prefixed with "i" — normal traffic
+        #     pattern, no action needed.
+        #   * suricata_local_dead -> warning orange, prefixed with
+        #     "!" — high-signal failure mode that bumps the verdict.
+        #   * unexplained -> warning red, prefixed with "!!" — the
+        #     local Suricata is silent for an unknown reason; the
+        #     verdict is bumped and the operator should investigate.
+        explanation = details.lower().strip()
+        if explanation in ("loopback_traffic", "vpn_traffic", "lan_only_traffic"):
+            label = explanation.replace("_traffic", "").replace("_", " ")
+            return (
+                "Divergence (info)",
+                f"i  Two-source disagreement explained by {label} traffic — normal",
+                QColor(0, 120, 212),
+            )
+        if explanation == "suricata_local_dead":
+            return (
+                "Divergence (warning)",
+                "!  Local Suricata stopped during the event — verdict escalated",
+                QColor(255, 152, 0),
+            )
+        # Default branch — unexplained or unknown explanation token.
+        return (
+            "Divergence (alert)",
+            "!! Unexplained divergence between sources — verdict escalated",
+            QColor(244, 67, 54),
+        )
+
     return event, details, None
 
 
