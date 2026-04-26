@@ -62,7 +62,6 @@ class EngineWorker(QThread):
 
     Signals:
         alert_received (dict): forwarded from PipelineController.
-        metrics_updated (dict): forwarded from PipelineController.
         activity_logged (str, str, str): forwarded from PipelineController.
         status_changed (str, str): forwarded from PipelineController.
         health_updated (str, str): forwarded from PipelineController.
@@ -79,7 +78,6 @@ class EngineWorker(QThread):
 
     # Pipeline signals (V3.5).
     alert_received = Signal(dict)
-    metrics_updated = Signal(dict)
     activity_logged = Signal(str, str, str)
     status_changed = Signal(str, str)
     health_updated = Signal(str, str)
@@ -141,7 +139,6 @@ class EngineWorker(QThread):
             parent=self,
         )
         self._pipeline_controller.alert_received.connect(self.alert_received)
-        self._pipeline_controller.metrics_updated.connect(self.metrics_updated)
         self._pipeline_controller.activity_logged.connect(self.activity_logged)
         self._pipeline_controller.status_changed.connect(self.status_changed)
         self._pipeline_controller.health_updated.connect(self.health_updated)

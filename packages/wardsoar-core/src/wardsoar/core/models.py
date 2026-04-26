@@ -56,13 +56,17 @@ class WardMode(str, Enum):
 
     - ``PROTECT``: burden of proof is on the *threat*. The Responder
       blocks only when Opus returns a CONFIRMED verdict with
-      confidence at or above ``confidence_threshold`` (default 0.70).
+      confidence at or above ``confidence_threshold`` (default
+      :data:`wardsoar.core.responder.DEFAULT_PROTECT_CONFIDENCE_THRESHOLD`,
+      currently 0.70).
       Any other verdict — BENIGN, SUSPICIOUS, INCONCLUSIVE, or a
       CONFIRMED below the threshold — is let through.
 
     - ``HARD_PROTECT``: burden of proof is on the *benignity*. The
       Responder blocks *unless* Opus returns BENIGN with confidence
-      at or above ``hard_protect_benign_threshold`` (default 0.99).
+      at or above ``hard_protect_benign_threshold`` (default
+      :data:`wardsoar.core.responder.DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD`,
+      currently 0.97).
       Anything else — including CONFIRMED, SUSPICIOUS, INCONCLUSIVE,
       a low-confidence BENIGN, or an Opus API failure — triggers a
       block. Designed for a threat landscape where the operator
@@ -357,9 +361,20 @@ class DivergenceFindings(BaseModel):
     or no correlated events were found."""
 
     suricata_local_state: str = "unknown"
-    """Output of check (c). One of ``running``, ``dead``, ``unknown``.
-    ``dead`` means the Suricata process is not running — a
-    high-signal divergence cause that bumps the verdict."""
+    """Output of check (c) — *legacy* dual-source field. One of
+    ``running``, ``dead``, ``unknown``. ``dead`` means the local
+    Suricata process is not running. Kept for the dual-source code
+    path; in N-source mode the operator should read
+    :attr:`suricata_states` instead, which carries one entry per
+    configured source."""
+
+    suricata_states: dict[str, str] = Field(default_factory=dict)
+    """Output of check (c) for the N-source flow. Maps each
+    configured Suricata source name (e.g. ``"netgate"``, ``"local"``,
+    ``"pi"``) to its observed state (``running`` / ``dead`` /
+    ``unknown``). Empty dict in dual-source mode — read
+    :attr:`suricata_local_state` instead. Any value of ``"dead"``
+    drives the verdict bump exactly like the legacy field did."""
 
     is_loopback: bool = False
     """Output of check (d). True when both ``src_ip`` and ``dest_ip``

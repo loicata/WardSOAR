@@ -81,8 +81,10 @@ def wizard_factory(qapp: object, tmp_path: Path) -> object:
 
 
 class TestPageIndices:
-    def test_total_pages_is_13(self) -> None:
-        assert TOTAL_PAGES == 13
+    def test_total_pages_is_17(self) -> None:
+        # v0.23.x: the four ``SourcesQuestionnaire`` pages were inlined
+        # at the head of the wizard, so the total grew from 13 to 17.
+        assert TOTAL_PAGES == 17
 
     def test_suricata_pages_inserted_after_pfsense(self) -> None:
         assert PAGE_SURICATA_INSTALL == PAGE_PFSENSE_SSH + 1

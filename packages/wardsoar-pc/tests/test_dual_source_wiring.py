@@ -8,7 +8,9 @@ log in ``main.py`` so that:
   - The new dual-source dispatch sits *before* the single-source
     branches (because the boolean evaluation orders Python `if`s
     by appearance, picking the most specific case first).
-  - ``DualSourceCorrelator`` is referenced inside the new method.
+  - ``NSourceCorrelator`` is referenced inside the new method
+    (DualSourceCorrelator was retired in v0.24 — the N-source
+    correlator subsumes its 2-source contract).
   - The reconciliation window is read from
     ``config.suricata_local.reconciliation_window_s`` and clamped
     to ``[30, 180]`` per Q1 doctrine.
@@ -93,7 +95,7 @@ class TestDualSourceMethod:
         )
         assert match is not None, "dual-source method body not found"
         body = match.group(1)
-        assert "from wardsoar.core.remote_agents import DualSourceCorrelator" in body
+        assert "from wardsoar.core.remote_agents.n_source_correlator import NSourceCorrelator" in body
 
     def test_method_constructs_both_agents(self, app_source: str) -> None:
         match = re.search(
@@ -145,7 +147,7 @@ class TestDualSourceMethod:
         )
         assert match is not None
         body = match.group(1)
-        assert "DualSourceCorrelator(" in body
+        assert "NSourceCorrelator(" in body
         assert "AgentStreamConsumer(correlator)" in body
 
     def test_method_handles_missing_local_install_with_fallback(self, app_source: str) -> None:

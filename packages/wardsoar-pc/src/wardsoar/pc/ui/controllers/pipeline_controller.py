@@ -106,9 +106,6 @@ class PipelineController(QObject):
     #: Emitted with the alert display data dict for the Alerts view.
     alert_received = Signal(dict)
 
-    #: Emitted with the rolling metrics dict for the Dashboard.
-    metrics_updated = Signal(dict)
-
     #: Emitted with ``(time, event, details)`` for the System
     #: Activity tab.
     activity_logged = Signal(str, str, str)
@@ -153,12 +150,8 @@ class PipelineController(QObject):
         self._running = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
-        # Counters (reset to zero each time the worker is rebuilt).
+        # File polling cursor (reset each time the worker is rebuilt).
         self._last_position = 0
-        self._alert_count = 0
-        self._filtered_count = 0
-        self._blocked_count = 0
-        self._processed_count = 0
         self._last_health_time: float = 0.0
 
     # ------------------------------------------------------------------
@@ -470,7 +463,6 @@ class PipelineController(QObject):
             )
             return
 
-        self._alert_count += 1
         logger.info(
             "Alert parsed: %s -> %s sig=%s",
             alert.src_ip,
@@ -557,8 +549,6 @@ class PipelineController(QObject):
             return
 
         if isinstance(result, FilteredResult):
-            self._filtered_count += 1
-
             # v0.12.0 — enrichment is now async (HTTP reputation
             # clients). v0.15.0 — enrich BOTH src and dest so the
             # Alert Detail view can surface "who's on both ends
@@ -632,7 +622,6 @@ class PipelineController(QObject):
         if not isinstance(result, DecisionRecord):
             raise TypeError(f"Expected DecisionRecord, got {type(result).__name__}")
         record = result
-        self._processed_count += 1
 
         # Extract verdict info.
         verdict = "inconclusive"
@@ -642,9 +631,6 @@ class PipelineController(QObject):
             verdict = record.analysis.verdict.value
             confidence = f"{record.analysis.confidence:.0%}"
             reasoning = record.analysis.reasoning
-
-        if record.actions_taken:
-            self._blocked_count += 1
 
         # v0.12.0 — enrichment is now async. v0.15.0 — enrich
         # BOTH src and dest. Run in parallel to keep wall time
@@ -741,18 +727,6 @@ class PipelineController(QObject):
                     }
                 )
                 break
-
-        # Update metrics.
-        self.metrics_updated.emit(
-            {
-                "alerts_today": self._alert_count,
-                "blocked_today": self._blocked_count,
-                "fp_rate": (
-                    self._filtered_count / self._alert_count if self._alert_count > 0 else 0.0
-                ),
-                "queue_depth": 0,
-            }
-        )
 
         # v0.8.6 B2: the per-alert PIPELINE row used to emit here
         # is gone. The Alerts tab carries the full record (with

@@ -105,7 +105,7 @@ def _eve_alert_json() -> str:
 
     The watcher requires every Suricata field (timestamp, ports,
     proto, severity); a trimmed payload returns ``None`` and
-    bypasses ``_alert_count`` increment.
+    skips the ``loop.create_task`` scheduling.
     """
     return json.dumps(
         {
@@ -132,11 +132,10 @@ def _eve_alert_json() -> str:
 
 
 class TestConstruction:
-    def test_six_signals_exist(self, qapp: QApplication, tmp_path: Path) -> None:
+    def test_five_signals_exist(self, qapp: QApplication, tmp_path: Path) -> None:
         controller = _make_controller(tmp_path)
         for name in (
             "alert_received",
-            "metrics_updated",
             "activity_logged",
             "status_changed",
             "health_updated",
@@ -148,10 +147,6 @@ class TestConstruction:
         controller = _make_controller(tmp_path)
         assert controller.loop is None
         assert controller._running is False  # noqa: SLF001
-        assert controller._alert_count == 0  # noqa: SLF001
-        assert controller._filtered_count == 0  # noqa: SLF001
-        assert controller._blocked_count == 0  # noqa: SLF001
-        assert controller._processed_count == 0  # noqa: SLF001
 
     def test_loop_property_exposes_internal_attribute(
         self, qapp: QApplication, tmp_path: Path
@@ -253,11 +248,16 @@ class TestProcessLine:
         self, qapp: QApplication, tmp_path: Path
     ) -> None:
         """Only ``alert`` events get pipelined — flow events stop after Activity."""
+        loop = MagicMock()
+        loop.is_running = MagicMock(return_value=True)
+        loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
         controller = _make_controller(tmp_path)
+        controller._loop = loop  # noqa: SLF001
+
         controller._process_line(  # noqa: SLF001
             json.dumps({"event_type": "tls", "src_ip": "1.1.1.1", "dest_ip": "8.8.8.8"})
         )
-        assert controller._alert_count == 0  # noqa: SLF001
+        loop.create_task.assert_not_called()
 
     def test_alert_event_parses_and_schedules_pipeline_task(
         self, qapp: QApplication, tmp_path: Path
@@ -274,7 +274,6 @@ class TestProcessLine:
 
         controller._process_line(_eve_alert_json())  # noqa: SLF001
 
-        assert controller._alert_count == 1  # noqa: SLF001
         loop.create_task.assert_called_once()
 
     def test_alert_event_with_unparseable_alert_logs_warning(
@@ -304,7 +303,6 @@ class TestProcessLine:
 
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert any("parse_eve_alert returned None" in r.getMessage() for r in warnings)
-        assert controller._alert_count == 0  # noqa: SLF001
 
     def test_alert_event_without_loop_raises(self, qapp: QApplication, tmp_path: Path) -> None:
         """Defensive: a parsed alert with no loop is a programmer error."""
@@ -327,12 +325,16 @@ class TestProcessNewLines:
     def test_no_new_data_short_circuits(self, qapp: QApplication, tmp_path: Path) -> None:
         eve_file = tmp_path / "eve.json"
         eve_file.write_text("first line\n")
+        loop = MagicMock()
+        loop.is_running = MagicMock(return_value=True)
+        loop.create_task = MagicMock(side_effect=lambda coro: coro.close())
         controller = _make_controller(tmp_path)
+        controller._loop = loop  # noqa: SLF001
         controller._last_position = eve_file.stat().st_size  # noqa: SLF001
 
         # No new bytes since _last_position; must not call _process_line.
         controller._process_new_lines(eve_file)  # noqa: SLF001
-        assert controller._alert_count == 0  # noqa: SLF001
+        loop.create_task.assert_not_called()
 
     def test_new_lines_dispatched_to_process_line(self, qapp: QApplication, tmp_path: Path) -> None:
         loop = MagicMock()
@@ -351,7 +353,7 @@ class TestProcessNewLines:
                 f.write(_eve_alert_json() + "\n\n")
 
         controller._process_new_lines(eve_file)  # noqa: SLF001
-        assert controller._alert_count == 2  # noqa: SLF001
+        assert loop.create_task.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +516,6 @@ class TestProcessAlertAsync:
         ):
             await controller._process_alert_async(_make_alert())  # noqa: SLF001
 
-        assert controller._filtered_count == 1  # noqa: SLF001
         assert len(alerts) == 1
         payload = alerts[0][0]
         assert payload["verdict"] == "filtered"
@@ -544,10 +545,8 @@ class TestProcessAlertAsync:
         pipeline = MagicMock()
         pipeline.process_alert = AsyncMock(return_value=record)
         controller = _make_controller(tmp_path, pipeline=pipeline)
-        controller._alert_count = 1  # noqa: SLF001 — set by _process_line normally
         alerts = _capture(controller, "alert_received")
         blocks = _capture(controller, "ip_blocked")
-        metrics = _capture(controller, "metrics_updated")
 
         with (
             patch(
@@ -561,12 +560,9 @@ class TestProcessAlertAsync:
         ):
             await controller._process_alert_async(record.alert)  # noqa: SLF001
 
-        assert controller._processed_count == 1  # noqa: SLF001
-        assert controller._blocked_count == 1  # noqa: SLF001
         assert len(alerts) == 1
         assert len(blocks) == 1
         assert blocks[0][0]["ip"] == "1.2.3.4"
-        assert metrics, "metrics_updated must be emitted on every DecisionRecord"
 
     @pytest.mark.asyncio
     async def test_decision_record_without_block_does_not_emit_ip_blocked(
@@ -587,7 +583,6 @@ class TestProcessAlertAsync:
         pipeline = MagicMock()
         pipeline.process_alert = AsyncMock(return_value=record)
         controller = _make_controller(tmp_path, pipeline=pipeline)
-        controller._alert_count = 1  # noqa: SLF001
         blocks = _capture(controller, "ip_blocked")
 
         with (
@@ -602,7 +597,6 @@ class TestProcessAlertAsync:
         ):
             await controller._process_alert_async(record.alert)  # noqa: SLF001
 
-        assert controller._blocked_count == 0  # noqa: SLF001
         assert blocks == []
 
     @pytest.mark.asyncio

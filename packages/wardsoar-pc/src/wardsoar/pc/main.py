@@ -51,7 +51,11 @@ from wardsoar.core.remote_agents import (
 from wardsoar.core.remote_agents.pfsense_ssh import BlockTracker
 from wardsoar.core.prescorer import AlertPreScorer
 from wardsoar.core.prescorer_feedback import PreScorerFeedbackStore
-from wardsoar.core.responder import ThreatResponder
+from wardsoar.core.responder import (
+    DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
+    DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+    ThreatResponder,
+)
 from wardsoar.core.rollback import RollbackManager, RollbackResult
 from wardsoar.core.rule_manager import RuleManager
 from wardsoar.core.suspect_asns import SuspectAsnRegistry, TorExitFetcher
@@ -414,9 +418,13 @@ class Pipeline:
             self._netgate_agent,
             block_tracker,
             trusted_temp=trusted_temp_registry,
-            confidence_threshold=config.analyzer.get("confidence_threshold", 0.7),
+            confidence_threshold=config.analyzer.get(
+                "confidence_threshold",
+                DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+            ),
             hard_protect_benign_threshold=config.analyzer.get(
-                "hard_protect_benign_threshold", 0.99
+                "hard_protect_benign_threshold",
+                DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
             ),
             cdn_allowlist=self._cdn_allowlist,
         )
@@ -888,19 +896,31 @@ class Pipeline:
             alert.alert_signature_id,
         )
 
-        # Step 0.5 — DivergenceInvestigator (Q3 / Q4 doctrine).
-        # Reads the ``source_corroboration`` tag injected by the
-        # DualSourceCorrelator into the EVE event. Only runs when
-        # the corroboration is DIVERGENCE_A or DIVERGENCE_B; for any
-        # other value (None, SINGLE_SOURCE, MATCH_CONFIRMED,
-        # *_PENDING) the investigator short-circuits and returns
-        # default findings (checks_run=[]) which the Bumper will
-        # ignore. Fail-safe: every internal check catches its own
-        # errors so the pipeline cannot stall here.
+        # Step 0.5 — DivergenceInvestigator (N-source doctrine).
+        # The new NSourceCorrelator injects a ``corroboration_status``
+        # CorroborationStatus instance carrying the per-source picture
+        # (matching / silent / dissenting + verdict). The legacy
+        # DualSourceCorrelator injected a string ``source_corroboration``
+        # tag — kept here as a fall-back so older recordings still
+        # replay. Only DIVERGENCE / MATCH_MAJORITY (or DIVERGENCE_A/B
+        # in the legacy enum) trigger the full check battery; every
+        # other verdict short-circuits to empty findings the Bumper
+        # then ignores. Fail-safe — every internal check catches its
+        # own errors so the pipeline cannot stall here.
+        from wardsoar.core.corroboration import (
+            CorroborationStatus as _CorroborationStatus,
+            CorroborationVerdict as _CorroborationVerdict,
+        )
+
         corroboration: Optional[_SourceCorroboration] = None
+        corroboration_status: Optional[_CorroborationStatus] = None
         divergence_findings: Optional[_DivergenceFindings] = None
         secondary_event: Optional[dict[str, Any]] = None
         try:
+            raw_status = alert.raw_event.get("corroboration_status")
+            if isinstance(raw_status, _CorroborationStatus):
+                corroboration_status = raw_status
+
             raw_corroboration = alert.raw_event.get("source_corroboration")
             if isinstance(raw_corroboration, str):
                 try:
@@ -918,7 +938,37 @@ class Pipeline:
             if isinstance(secondary_raw, dict):
                 secondary_event = secondary_raw
 
-            if corroboration in (
+            secondary_events_raw = alert.raw_event.get("secondary_events")
+            secondary_events_n: Optional[dict[str, dict[str, Any]]] = None
+            if isinstance(secondary_events_raw, dict):
+                secondary_events_n = {
+                    str(k): dict(v) for k, v in secondary_events_raw.items() if isinstance(v, dict)
+                }
+
+            # New N-source path: triggered when the correlator emitted a
+            # CorroborationStatus indicating divergence or partial match.
+            if corroboration_status is not None and corroboration_status.verdict in (
+                _CorroborationVerdict.DIVERGENCE,
+                _CorroborationVerdict.MATCH_MAJORITY,
+            ):
+                divergence_findings = await self._divergence_investigator.investigate_n(
+                    event=alert.raw_event,
+                    status=corroboration_status,
+                    secondary_events=secondary_events_n,
+                )
+                logger.info(
+                    "[pipeline] Step 0.5: N-source divergence investigated "
+                    "(verdict=%s, matching=%s, silent=%s, explanation=%s, is_explained=%s)",
+                    corroboration_status.verdict.value,
+                    list(corroboration_status.matching_sources),
+                    list(corroboration_status.silent_sources),
+                    divergence_findings.explanation,
+                    divergence_findings.is_explained,
+                )
+            # Legacy dual-source path — kept so recordings tagged by the
+            # old DualSourceCorrelator can still replay through the
+            # current pipeline.
+            elif corroboration in (
                 _SourceCorroboration.DIVERGENCE_A,
                 _SourceCorroboration.DIVERGENCE_B,
             ):
@@ -928,7 +978,7 @@ class Pipeline:
                     secondary_event=secondary_event,
                 )
                 logger.info(
-                    "[pipeline] Step 0.5: divergence investigated "
+                    "[pipeline] Step 0.5: legacy dual divergence investigated "
                     "(corroboration=%s, explanation=%s, is_explained=%s)",
                     corroboration.value,
                     divergence_findings.explanation,

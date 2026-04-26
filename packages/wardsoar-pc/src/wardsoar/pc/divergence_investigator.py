@@ -51,6 +51,7 @@ from typing import Any, Optional, Union
 
 import psutil
 
+from wardsoar.core.corroboration import CorroborationStatus
 from wardsoar.core.models import DivergenceFindings, SourceCorroboration
 from wardsoar.pc import win_paths
 from wardsoar.pc.local_suricata import SuricataProcess
@@ -109,8 +110,15 @@ class DivergenceInvestigator:
         suricata_process: Optional[SuricataProcess] = None,
         netconns_buffer: Optional[Any] = None,
         local_subnets_cidr: Optional[list[str]] = None,
+        processes_by_name: Optional[dict[str, SuricataProcess]] = None,
     ) -> None:
         self._process = suricata_process
+        # N-source mapping: every configured local Suricata source gets
+        # its own process handle here (the operator may run several —
+        # e.g. one per network interface). When provided, the alive
+        # check returns a per-source dict; the legacy single-process
+        # path stays available so existing callers don't break.
+        self._processes_by_name: dict[str, SuricataProcess] = dict(processes_by_name or {})
         self._netconns = netconns_buffer
         # Parse + dedupe CIDRs once at init so the per-event check
         # is a tight integer-comparison loop.
@@ -230,6 +238,93 @@ class DivergenceInvestigator:
             is_lan_only=is_lan_only,
         )
 
+    async def investigate_n(
+        self,
+        event: dict[str, Any],
+        status: CorroborationStatus,
+        secondary_events: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> DivergenceFindings:
+        """N-source counterpart to :meth:`investigate`.
+
+        Same six fail-safe checks but driven by a
+        :class:`CorroborationStatus` instead of the legacy
+        :class:`SourceCorroboration` enum, and the alive check
+        produces a :attr:`DivergenceFindings.suricata_states` mapping
+        keyed by source name (one entry per configured local
+        Suricata).
+
+        Defensive: only :data:`CorroborationVerdict.DIVERGENCE` and
+        :data:`CorroborationVerdict.MATCH_MAJORITY` justify a full
+        investigation. Other verdicts (PENDING, MATCH_FULL,
+        SINGLE_SOURCE, NO_DATA) get an empty :class:`DivergenceFindings`
+        record so downstream consumers always have a well-formed
+        object.
+        """
+        from wardsoar.core.corroboration import CorroborationVerdict
+
+        if status.verdict not in (
+            CorroborationVerdict.DIVERGENCE,
+            CorroborationVerdict.MATCH_MAJORITY,
+        ):
+            return DivergenceFindings()
+
+        snapshot_task = asyncio.create_task(self._check_snapshot(event))
+        sysmon_task = asyncio.create_task(self._check_sysmon(event))
+        suricata_task = asyncio.create_task(self._check_suricata_alive_per_source())
+        loopback_task = asyncio.create_task(self._check_loopback(event))
+        vpn_task = asyncio.create_task(self._check_vpn())
+        lan_task = asyncio.create_task(self._check_lan_only(event))
+
+        results = await asyncio.gather(
+            snapshot_task,
+            sysmon_task,
+            suricata_task,
+            loopback_task,
+            vpn_task,
+            lan_task,
+            return_exceptions=False,
+        )
+        snapshot_summary = results[0]
+        sysmon_correlation = results[1]
+        suricata_states: dict[str, str] = results[2]
+        is_loopback = results[3]
+        is_vpn = results[4]
+        is_lan_only = results[5]
+
+        checks_run: list[str] = ["snapshot", "suricata_alive", "loopback", "vpn", "lan_only"]
+        if sysmon_correlation:
+            checks_run.insert(1, "sysmon")
+
+        # Synthesise the explanation. Same ladder as the legacy
+        # investigate() method, but the suricata-dead check now
+        # surfaces if ANY configured source went silent.
+        is_explained = False
+        explanation = "unexplained"
+        if is_loopback:
+            is_explained = True
+            explanation = "loopback_traffic"
+        elif is_vpn:
+            is_explained = True
+            explanation = "vpn_traffic"
+        elif is_lan_only:
+            is_explained = True
+            explanation = "lan_only_traffic"
+        elif any(state == "dead" for state in suricata_states.values()):
+            is_explained = True
+            explanation = "suricata_local_dead"
+
+        return DivergenceFindings(
+            checks_run=checks_run,
+            is_explained=is_explained,
+            explanation=explanation,
+            snapshot_summary=snapshot_summary,
+            sysmon_correlation=sysmon_correlation,
+            suricata_states=suricata_states,
+            is_loopback=is_loopback,
+            is_vpn=is_vpn,
+            is_lan_only=is_lan_only,
+        )
+
     # ------------------------------------------------------------------
     # Individual checks (each is fail-safe — never raises)
     # ------------------------------------------------------------------
@@ -341,7 +436,8 @@ class DivergenceInvestigator:
         return []
 
     async def _check_suricata_alive(self) -> str:
-        """Check (c): is the local Suricata process running?"""
+        """Check (c) — legacy single-process flavour. Returns ``running`` /
+        ``dead`` / ``unknown`` for the lone configured local Suricata."""
         if self._process is None:
             return "unknown"
         try:
@@ -351,6 +447,26 @@ class DivergenceInvestigator:
         except Exception as exc:  # noqa: BLE001 — fail-safe
             logger.debug("DivergenceInvestigator: suricata_alive check failed: %s", exc)
             return "unknown"
+
+    async def _check_suricata_alive_per_source(self) -> dict[str, str]:
+        """Check (c) — N-source flavour. Returns ``{name: state}`` for every
+        configured Suricata source. ``"dead"`` from any source still drives
+        the verdict bump; the dict shape lets the operator see exactly which
+        source went silent."""
+        if not self._processes_by_name:
+            return {}
+        states: dict[str, str] = {}
+        for name, process in self._processes_by_name.items():
+            try:
+                states[name] = "running" if process.is_running() else "dead"
+            except Exception as exc:  # noqa: BLE001 — fail-safe per source
+                logger.debug(
+                    "DivergenceInvestigator: per-source alive check (%s) failed: %s",
+                    name,
+                    exc,
+                )
+                states[name] = "unknown"
+        return states
 
     async def _check_loopback(self, event: dict[str, Any]) -> bool:
         """Check (d): is this a loopback flow (127/8, ::1, host local IPs)?"""

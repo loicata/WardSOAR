@@ -141,6 +141,11 @@ class AppConfig(BaseModel):
     change_manager: dict[str, Any] = Field(default_factory=dict)
     replay: dict[str, Any] = Field(default_factory=dict)
     app: dict[str, Any] = Field(default_factory=dict)
+    # v0.23.x: System tab UI configuration. Lists Windows services the
+    # operator wants visible under "Active Services" plus the refresh
+    # cadence. Empty dict is valid — the tab simply shows a "no
+    # services configured" placeholder.
+    system_view: dict[str, Any] = Field(default_factory=dict)
     # v0.22.21: source-topology answers from the SourcesQuestionnaire
     # (Netgate / Virus Sniff / local Suricata). Drives RemoteAgent
     # instantiation in Pipeline.__init__ — when ``netgate: False`` the
@@ -149,6 +154,15 @@ class AppConfig(BaseModel):
     # v0.22.20 (missing this key entirely) default to "Netgate-only"
     # for backward compatibility.
     sources: dict[str, Any] = Field(default_factory=dict)
+    # v0.23.x: local-Suricata runtime configuration written by the
+    # wizard (interface name, reconciliation window, extra LAN CIDRs).
+    # Read by ``ui/app.py:_start_dual_source_stream_consumer`` to
+    # build the LocalSuricataAgent. Without this field declared on
+    # the Pydantic schema the YAML section was silently dropped on
+    # load, leaving ``interface=""`` and forcing a Netgate-only
+    # fallback even when the operator had completed the Suricata
+    # pages of the wizard.
+    suricata_local: dict[str, Any] = Field(default_factory=dict)
 
 
 class WhitelistConfig(BaseModel):
@@ -176,6 +190,15 @@ def _create_default_config(path: Path) -> None:
     Args:
         path: Target path for config.yaml.
     """
+    # Local import to avoid the circular dependency between config and
+    # responder (responder imports WhitelistConfig from this module).
+    from wardsoar.core.responder import (
+        DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
+        DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
+    )
+
+    _DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD = DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD
+    _DEFAULT_PROTECT_CONFIDENCE_THRESHOLD = DEFAULT_PROTECT_CONFIDENCE_THRESHOLD
     data_dir = get_data_dir()
 
     # Create required directories in writable location
@@ -214,14 +237,18 @@ def _create_default_config(path: Path) -> None:
             "model": "claude-opus-4-7",
             "max_tokens": 4096,
             # Protect mode — min confidence on a CONFIRMED verdict to
-            # trigger a block. Default 0.70 = moderate.
-            "confidence_threshold": 0.7,
+            # trigger a block. Default sourced from
+            # ``responder.DEFAULT_PROTECT_CONFIDENCE_THRESHOLD`` so the
+            # whole codebase has one source of truth — currently 0.70.
+            "confidence_threshold": _DEFAULT_PROTECT_CONFIDENCE_THRESHOLD,
             # Hard Protect mode — min confidence on a BENIGN verdict to
             # SKIP a block. Any lower value in BENIGN, or any non-BENIGN
-            # verdict, blocks. Default 0.99 = very restrictive (the
-            # operator accepts FPs in exchange for near-zero FNs and
-            # relies on the 1-click rollback to recover).
-            "hard_protect_benign_threshold": 0.99,
+            # verdict, blocks. Default sourced from
+            # ``responder.DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD`` so the
+            # whole codebase has one source of truth — currently 0.97
+            # (operator accepts a few FPs in exchange for near-zero FNs
+            # and relies on the 1-click rollback to recover).
+            "hard_protect_benign_threshold": _DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD,
         },
         "responder": {
             # New in v0.5.5 — replaces the legacy ``dry_run`` bool.
@@ -308,11 +335,19 @@ def _migrate_config_if_needed(raw: dict[str, Any], path: Path) -> dict[str, Any]
             migrations.append("responder.dry_run=False → responder.mode=protect")
 
     # Seed the Hard Protect threshold if the operator upgraded without
-    # seeing the new key. Default matches _create_default_config.
+    # seeing the new key. Default matches _create_default_config and
+    # the central constant in :mod:`wardsoar.core.responder`. Local
+    # import keeps this module importable from responder without a
+    # circular dependency.
+    from wardsoar.core.responder import DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD
+
     analyzer_section = raw.setdefault("analyzer", {})
     if "hard_protect_benign_threshold" not in analyzer_section:
-        analyzer_section["hard_protect_benign_threshold"] = 0.99
-        migrations.append("analyzer.hard_protect_benign_threshold: added default 0.99")
+        analyzer_section["hard_protect_benign_threshold"] = DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD
+        migrations.append(
+            f"analyzer.hard_protect_benign_threshold: added default "
+            f"{DEFAULT_HARD_PROTECT_BENIGN_THRESHOLD}"
+        )
 
     if migrations:
         logger.warning(

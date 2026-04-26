@@ -55,6 +55,7 @@ from wardsoar.pc.ui.views.dashboard import DashboardView
 from wardsoar.pc.ui.views.keys_view import KeysView
 from wardsoar.pc.ui.views.netgate import NetgateView
 from wardsoar.pc.ui.views.replay_view import ReplayView
+from wardsoar.pc.ui.views.system_view import SystemView
 
 logger = logging.getLogger("ward_soar.ui.app")
 
@@ -243,10 +244,15 @@ class MainWindow(FluentWindow):  # type: ignore[misc]
 
     _INTERFACE_NAMES = ["Dashboard", "Alerts", "Configuration", "Replay"]
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        system_view_config: Optional[dict[str, Any]] = None,
+        parent: Optional[QWidget] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
+        system_view_config = system_view_config or {}
 
         # Set window icon from assets
         if getattr(sys, "frozen", False):
@@ -276,6 +282,12 @@ class MainWindow(FluentWindow):  # type: ignore[misc]
         self._replay.setObjectName("replayView")
         self._netgate = NetgateView()
         self._netgate.setObjectName("netgateView")
+        raw_interval = system_view_config.get("refresh_interval_seconds")
+        self._system = SystemView(
+            services=list(system_view_config.get("services", []) or []),
+            refresh_interval_seconds=int(raw_interval) if raw_interval is not None else None,
+        )
+        self._system.setObjectName("systemView")
 
         # Connect dashboard activity forwarding to Activity tab
         self._dashboard._activity_callback = self._activity.add_activity
@@ -297,6 +309,12 @@ class MainWindow(FluentWindow):  # type: ignore[misc]
             self._activity,
             FIF.HISTORY,
             "Activity",
+            position=NavigationItemPosition.TOP,
+        )
+        self.addSubInterface(
+            self._system,
+            FIF.IOT,
+            "System",
             position=NavigationItemPosition.TOP,
         )
         self.addSubInterface(
@@ -430,34 +448,24 @@ class WardApp:
             sys.exit(0)
 
         # Launch setup flow on first run (before load_config creates
-        # defaults). The flow has two stages now (v0.22.20):
-        #   1. SourcesQuestionnaire — three Yes/No questions about which
-        #      alert sources the operator has (Netgate / Virus Sniff /
-        #      local Suricata) plus a recap. Cancelling exits the app.
-        #   2. SetupWizard — the eleven-page detailed config flow,
-        #      gated on the source choices (e.g. pfSense SSH page is
-        #      skipped when Netgate=No).
+        # defaults). v0.23.x: the source-topology questionnaire that
+        # used to live in a separate dialog is inlined as the first
+        # four pages of the SetupWizard, so a single Back/Next flow
+        # carries the operator from "do you have a Netgate" to the
+        # final summary. Cancelling at any point exits the app.
         if first_run:
             from wardsoar.core.config import get_data_dir
             from wardsoar.pc.ui.setup_wizard import SetupWizard
-            from wardsoar.pc.ui.sources_questionnaire import SourcesQuestionnaire
 
-            questionnaire = SourcesQuestionnaire()
-            if questionnaire.exec() != SourcesQuestionnaire.DialogCode.Accepted:
-                sys.exit(0)
-
-            wizard = SetupWizard(
-                data_dir=get_data_dir(),
-                sources=questionnaire.choices,
-            )
+            wizard = SetupWizard(data_dir=get_data_dir())
             if wizard.exec() != SetupWizard.DialogCode.Accepted:
                 sys.exit(0)
 
         # Now load config (wizard created it, or it already existed)
         load_env()
-        load_config()
+        config = load_config()
 
-        self._window = MainWindow()
+        self._window = MainWindow(system_view_config=dict(config.system_view))
         self._tray = TrayManager(self._window)
 
         # Connect tray signals
@@ -511,10 +519,9 @@ class WardApp:
 
             self._engine.alert_received.connect(alerts_view.add_alert_row)
             self._engine.alert_received.connect(self._on_alert_for_charts)
-            self._engine.metrics_updated.connect(dashboard.update_metrics)
             self._engine.activity_logged.connect(dashboard.add_activity)
             self._engine.status_changed.connect(dashboard.set_status)
-            self._engine.health_updated.connect(dashboard.update_health)
+            self._engine.health_updated.connect(self._window._system.update_health)
             # Rollback wiring: user clicks "Unblock IP" in the detail panel,
             # the engine runs the full rollback async, then reports back so
             # the UI can re-enable the button and log the outcome.
@@ -831,7 +838,7 @@ class WardApp:
             dashboard: Dashboard view for status updates.
         """
         from wardsoar.core.config import get_data_dir
-        from wardsoar.core.remote_agents import DualSourceCorrelator
+        from wardsoar.core.remote_agents.n_source_correlator import NSourceCorrelator
         from wardsoar.pc.local_suricata import (
             SuricataProcess,
             find_suricata_install_dir,
@@ -932,18 +939,48 @@ class WardApp:
                 clamped_window,
             )
 
-        # ----- Wrap both in the correlator -----
-        correlator = DualSourceCorrelator(
-            external_agent=external_agent,
-            local_agent=local_agent,
+        # ----- Threshold ratio for N-source corroboration (γ option) -----
+        # Read from ``config.suricata_local.corroboration_threshold_ratio``;
+        # default 1.0 = strict mode (every configured source must observe
+        # AND agree). Operators in noisy fleets can lower this to e.g.
+        # 0.66 (2/3) — see project_n_source_refactor.md Q2.
+        raw_threshold: Any = (
+            local_cfg.get("corroboration_threshold_ratio", 1.0)
+            if isinstance(local_cfg, dict)
+            else 1.0
+        )
+        try:
+            threshold_ratio = float(raw_threshold)
+        except (TypeError, ValueError):
+            threshold_ratio = 1.0
+        if not 0.0 < threshold_ratio <= 1.0:
+            logger.warning(
+                "config.suricata_local.corroboration_threshold_ratio = %s "
+                "outside (0.0, 1.0]; coercing to 1.0 (strict mode).",
+                raw_threshold,
+            )
+            threshold_ratio = 1.0
+
+        # ----- Wrap every configured Suricata source in the N-source correlator -----
+        # Two sources for now (Netgate + local). Future-extensible: any
+        # operator-added source goes into the same dict and the
+        # correlator scales transparently.
+        from wardsoar.core.remote_agents.protocol import RemoteAgent as _RemoteAgent
+
+        sources: dict[str, _RemoteAgent] = {
+            "external": external_agent,
+            "local": local_agent,
+        }
+        correlator = NSourceCorrelator(
+            sources=sources,
             window_seconds=clamped_window,
+            threshold_ratio=threshold_ratio,
         )
         logger.info(
-            "DualSourceCorrelator built: external=NetgateAgent@%s, "
-            "local=LocalSuricataAgent (interface=%s), window=%.0fs",
-            pfsense_ip,
-            interface,
+            "NSourceCorrelator built: sources=%s, window=%.0fs, threshold=%.2f",
+            list(sources.keys()),
             clamped_window,
+            threshold_ratio,
         )
 
         self._stream_consumer = AgentStreamConsumer(correlator)
@@ -951,12 +988,11 @@ class WardApp:
         self._stream_consumer.status_changed.connect(dashboard.add_ssh_status)
         self._stream_consumer.start()
         logger.info(
-            "AgentStreamConsumer started (agent=DualSourceCorrelator, "
-            "external=%s@%s, local=%s, window=%.0fs)",
-            ssh_user,
-            pfsense_ip,
-            interface,
+            "AgentStreamConsumer started (agent=NSourceCorrelator, "
+            "sources=%s, window=%.0fs, threshold=%.2f)",
+            list(sources.keys()),
             clamped_window,
+            threshold_ratio,
         )
 
     def _on_alert_for_charts(self, alert_data: dict[str, Any]) -> None:
@@ -1004,26 +1040,13 @@ class WardApp:
             ts=ts_value,
         )
 
-        # Step 11 of project_dual_suricata_sync.md — surface the
-        # divergence on the dashboard's 24 h counter and on the
-        # Activity tab. Only fires when the pipeline_controller
-        # observed a divergent corroboration (DIVERGENCE_A / B);
-        # for SINGLE_SOURCE / MATCH_CONFIRMED / etc. the alert
-        # carries None tags and we skip both.
+        # Surface the divergence on the Activity tab when the
+        # pipeline_controller observed a divergent corroboration
+        # (DIVERGENCE_A / B); SINGLE_SOURCE / MATCH_CONFIRMED carry
+        # None tags and skip the annotation.
         corroboration = alert_data.get("source_corroboration")
         if corroboration in ("divergence_a", "divergence_b"):
             explanation = alert_data.get("divergence_explanation") or "unexplained"
-            is_unexplained = bool(alert_data.get("divergence_unexplained", False)) or (
-                explanation == "suricata_local_dead"
-            )
-            try:
-                self._window._dashboard.record_divergence(
-                    explanation=str(explanation),
-                    is_unexplained=is_unexplained,
-                    ts=ts_value,
-                )
-            except Exception:  # noqa: BLE001 — UI surface must never crash the engine
-                logger.debug("dashboard.record_divergence raised", exc_info=True)
 
             # Activity tab annotation. The Dashboard fans every
             # add_activity call out to the Activity tab via its
