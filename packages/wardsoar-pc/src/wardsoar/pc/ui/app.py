@@ -656,6 +656,10 @@ class WardApp:
             # / Pipeline.__init__ for the matching server-side wiring).
             #
             # Decision tree:
+            #   sources.netgate=True AND
+            #   sources.suricata_local=True     → DualSourceCorrelator
+            #                                     (configs 3 / 5 — Q4
+            #                                     A doctrine)
             #   sources.netgate=True            → NetgateAgent (SSH+tail)
             #   sources.suricata_local=True     → LocalSuricataAgent
             #                                     (local Suricata + WinFW)
@@ -663,15 +667,20 @@ class WardApp:
             #
             # Phase 3b.5 introduced the AgentStreamConsumer abstraction
             # so any RemoteAgent's stream_alerts() can drive the
-            # pipeline. The dual-Suricata case (configs 3 / 5 — both
-            # netgate AND suricata_local) lands later via the
-            # DualSourceCorrelator (see project_dual_suricata_sync.md);
-            # for now the dual case picks the external source as base.
+            # pipeline. The dual-source case (Step 9 of the
+            # dual-Suricata implementation, see
+            # project_dual_suricata_sync.md) wraps both agents in a
+            # DualSourceCorrelator that fans them in to a single
+            # tagged stream.
             sources = getattr(config, "sources", {}) or {}
             self._stream_consumer: Optional[AgentStreamConsumer] = None
-            if sources.get("netgate", False) and watcher_mode == "ssh":
+            netgate_on = bool(sources.get("netgate", False)) and watcher_mode == "ssh"
+            local_on = bool(sources.get("suricata_local", False))
+            if netgate_on and local_on:
+                self._start_dual_source_stream_consumer(config, dashboard)
+            elif netgate_on:
                 self._start_netgate_stream_consumer(config, dashboard)
-            elif sources.get("suricata_local", False):
+            elif local_on:
                 self._start_local_suricata_stream_consumer(config, dashboard)
 
             logger.info("Engine worker started (mode: %s)", watcher_mode)
@@ -795,6 +804,159 @@ class WardApp:
             "AgentStreamConsumer started (agent=LocalSuricataAgent, " "interface=%s, eve=%s)",
             interface,
             process.eve_path,
+        )
+
+    def _start_dual_source_stream_consumer(self, config: Any, dashboard: Any) -> None:
+        """Start the dual-source consumer for configs 3 & 5.
+
+        Builds **both** agents (NetgateAgent for the external source +
+        LocalSuricataAgent for the PC source) and wraps them in a
+        :class:`DualSourceCorrelator`. The correlator fans-in their
+        two streams into one tagged stream that
+        :class:`AgentStreamConsumer` consumes transparently.
+
+        Reconciliation window is read from
+        ``config.suricata_local.reconciliation_window_s`` (default
+        120 s — Q1 doctrine, ``project_dual_suricata_sync.md``).
+        Clamped to ``[30, 180]`` to defend against hand-edited
+        configs.
+
+        If the local Suricata is not yet installed (no install dir
+        or no interface configured), the method falls back to a
+        Netgate-only stream so the operator still has a working
+        pipeline; a WARNING log invites them to run the wizard.
+
+        Args:
+            config: Application configuration.
+            dashboard: Dashboard view for status updates.
+        """
+        from wardsoar.core.config import get_data_dir
+        from wardsoar.core.remote_agents import DualSourceCorrelator
+        from wardsoar.pc.local_suricata import (
+            SuricataProcess,
+            find_suricata_install_dir,
+        )
+        from wardsoar.pc.local_suricata_agent import LocalSuricataAgent
+        from wardsoar.pc.windows_firewall import WindowsFirewallBlocker
+
+        # ----- External source: NetgateAgent -----
+        ssh_config = config.watcher.get("ssh", {})
+        responder_ssh = config.responder.get("pfsense", {})
+        network = config.network
+        pfsense_ip = network.get("pfsense_ip", "192.168.2.1")
+        pc_ip = network.get("pc_ip", "")
+        ssh_user = responder_ssh.get("ssh_user", "admin")
+        ssh_key_path = responder_ssh.get("ssh_key_path", "")
+        ssh_port = int(responder_ssh.get("ssh_port", 22))
+        remote_eve_path = ssh_config.get(
+            "remote_eve_path",
+            "/var/log/suricata/suricata_igc252678/eve.json",
+        )
+        external_agent = NetgateAgent.from_credentials(
+            host=pfsense_ip,
+            ssh_user=ssh_user,
+            ssh_key_path=ssh_key_path,
+            ssh_port=ssh_port,
+            eve_path=remote_eve_path,
+            local_bind_addr=pc_ip,
+        )
+
+        # ----- Local source: LocalSuricataAgent -----
+        suricata_dir = find_suricata_install_dir()
+        local_cfg = getattr(config, "suricata_local", {}) or {}
+        interface = local_cfg.get("interface", "") if isinstance(local_cfg, dict) else ""
+
+        if suricata_dir is None or not interface:
+            # Fallback: stream from the external source only. The
+            # dual-source correlation cannot engage without the local
+            # Suricata, but the operator still gets a functional
+            # Netgate-only pipeline. A wizard-prompt log invites
+            # them to complete the setup.
+            logger.warning(
+                "_start_dual_source_stream_consumer: local Suricata not "
+                "ready (suricata_dir=%s, interface=%r). Falling back to "
+                "Netgate-only stream — dual-source correlation cannot "
+                "engage until the operator runs the Suricata-install "
+                "wizard.",
+                suricata_dir,
+                interface,
+            )
+            self._stream_consumer = AgentStreamConsumer(external_agent)
+            self._stream_consumer.event_received.connect(self._engine.on_alert_event)
+            self._stream_consumer.status_changed.connect(dashboard.add_ssh_status)
+            self._stream_consumer.start()
+            logger.info("AgentStreamConsumer started (agent=NetgateAgent, fallback)")
+            return
+
+        log_dir = get_data_dir() / "suricata"
+        config_path = log_dir / "suricata.yaml"
+        process = SuricataProcess(
+            binary_path=suricata_dir / "suricata.exe",
+            config_path=config_path,
+            interface=interface,
+            log_dir=log_dir,
+        )
+        local_agent = LocalSuricataAgent(
+            process=process,
+            blocker=WindowsFirewallBlocker(),
+        )
+
+        # Spawn Suricata before the consumer starts tailing eve.json.
+        # The agent's ``startup`` is async, so schedule it on the
+        # engine loop and keep going — ``stream_alerts`` itself
+        # recovers from a missing file (Suricata still booting) so
+        # we don't need to wait for the spawn to complete here.
+        loop = asyncio.get_event_loop()
+        loop.create_task(local_agent.startup())
+
+        # ----- Reconciliation window: read + clamp -----
+        # Q1 doctrine: 120 s default, configurable in [30, 180].
+        # Anything outside that band is silently coerced rather than
+        # propagated as an error — the pipeline must keep working
+        # even on a hand-edited config.
+        raw_window: Any = (
+            local_cfg.get("reconciliation_window_s", 120.0)
+            if isinstance(local_cfg, dict)
+            else 120.0
+        )
+        try:
+            window_s = float(raw_window)
+        except (TypeError, ValueError):
+            window_s = 120.0
+        clamped_window = max(30.0, min(180.0, window_s))
+        if clamped_window != window_s:
+            logger.warning(
+                "config.suricata_local.reconciliation_window_s = %s "
+                "outside [30, 180] band; clamped to %.0fs.",
+                raw_window,
+                clamped_window,
+            )
+
+        # ----- Wrap both in the correlator -----
+        correlator = DualSourceCorrelator(
+            external_agent=external_agent,
+            local_agent=local_agent,
+            window_seconds=clamped_window,
+        )
+        logger.info(
+            "DualSourceCorrelator built: external=NetgateAgent@%s, "
+            "local=LocalSuricataAgent (interface=%s), window=%.0fs",
+            pfsense_ip,
+            interface,
+            clamped_window,
+        )
+
+        self._stream_consumer = AgentStreamConsumer(correlator)
+        self._stream_consumer.event_received.connect(self._engine.on_alert_event)
+        self._stream_consumer.status_changed.connect(dashboard.add_ssh_status)
+        self._stream_consumer.start()
+        logger.info(
+            "AgentStreamConsumer started (agent=DualSourceCorrelator, "
+            "external=%s@%s, local=%s, window=%.0fs)",
+            ssh_user,
+            pfsense_ip,
+            interface,
+            clamped_window,
         )
 
     def _on_alert_for_charts(self, alert_data: dict[str, Any]) -> None:

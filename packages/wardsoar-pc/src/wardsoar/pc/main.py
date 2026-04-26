@@ -101,8 +101,17 @@ class Pipeline:
 
         # Build the remote enforcement agent based on the operator's
         # answers in the SourcesQuestionnaire (persisted under
-        # config.sources). Three branches:
+        # config.sources). Four branches:
         #
+        #   * netgate=True
+        #     + suricata_local=True   -> NetgateAgent (perimeter
+        #                                enforcement) — the local
+        #                                Suricata is *streaming-only*
+        #                                in dual-source mode, owned
+        #                                by ui/app.py via the
+        #                                DualSourceCorrelator (see
+        #                                project_dual_suricata_sync.md
+        #                                Q4 A doctrine);
         #   * netgate=True            -> real NetgateAgent (legacy default,
         #                                rétro-compat for configs without
         #                                a sources: key);
@@ -118,6 +127,14 @@ class Pipeline:
         #                                crashes on a hand-edited config).
         netgate_enabled: bool = bool(config.sources.get("netgate", True))
         suricata_local_enabled: bool = bool(config.sources.get("suricata_local", False))
+        if netgate_enabled and suricata_local_enabled:
+            logger.info(
+                "config.sources: dual-source mode (netgate=True, "
+                "suricata_local=True). Pipeline enforcement uses "
+                "NetgateAgent (perimeter); the local Suricata is "
+                "wired as a streaming-only source in ui/app.py via "
+                "the DualSourceCorrelator."
+            )
         pfsense_cfg = config.responder.get("pfsense", {})
         ssh_key_path = pfsense_cfg.get("ssh_key_path", "") or os.getenv("WARD_SSH_KEY_PATH", "")
 
