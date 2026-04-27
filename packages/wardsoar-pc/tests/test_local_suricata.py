@@ -50,6 +50,20 @@ def _setup_proc_files(
 
 
 class TestSuricataProcessLifecycle:
+    @pytest.fixture(autouse=True)
+    def stub_npf_resolver(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Skip the Get-NetAdapter PowerShell call across the lifecycle suite.
+
+        The resolver has its own dedicated tests; here we only care about
+        Popen wiring, idempotence, etc., and we don't want the friendly
+        name lookup running on the test host (it would crash on non-
+        Windows CI and is environment-dependent on Windows).
+        """
+        monkeypatch.setattr(
+            "wardsoar.pc.local_suricata._resolve_interface_to_npf",
+            lambda name: name,
+        )
+
     @pytest.mark.asyncio
     async def test_eve_path_property(self, tmp_path: Path) -> None:
         binary, config, log_dir = _setup_proc_files(tmp_path)
@@ -234,11 +248,17 @@ class TestSuricataProcessLifecycle:
 class TestGenerateSuricataConfig:
     def test_writes_file_with_substitutions(self, tmp_path: Path) -> None:
         config_path = tmp_path / "config" / "suricata.yaml"
+        rule_dir = tmp_path / "rules"
+        rule_dir.mkdir()
+        # Lay down a couple of rule files so the generator emits them
+        # (it filters _DEFAULT_RULE_FILES against on-disk presence).
+        (rule_dir / "drop.rules").write_text("# drop rules", encoding="utf-8")
+        (rule_dir / "emerging-malware.rules").write_text("# malware", encoding="utf-8")
         result = generate_suricata_config(
             config_path=config_path,
             interface="Ethernet 2",
             log_dir=tmp_path / "logs",
-            rule_dir=tmp_path / "rules",
+            rule_dir=rule_dir,
             classification_file=tmp_path / "classification.config",
             reference_config_file=tmp_path / "reference.config",
         )
@@ -247,25 +267,138 @@ class TestGenerateSuricataConfig:
         content = config_path.read_text(encoding="utf-8")
         assert "Ethernet 2" in content
         assert "eve.json" in content
-        assert "suricata.rules" in content
+        # Both rule files we laid on disk must show up in the rule list.
+        assert "drop.rules" in content
+        assert "emerging-malware.rules" in content
 
-    def test_paths_use_forward_slashes(self, tmp_path: Path) -> None:
-        """YAML on Windows is happiest with forward slashes — no
-        escape ambiguity, no surprises in libyaml strict mode.
+    def test_paths_use_native_backslashes_on_windows(self, tmp_path: Path) -> None:
+        """Suricata 8.x on Windows requires native backslash paths for
+        ``default-rule-path``. Forward slashes there cause Suricata to
+        concatenate paths incorrectly when locating the per-rule files,
+        leading to ``No such file or directory`` errors at startup.
         Pin this rendering invariant."""
         config_path = tmp_path / "suricata.yaml"
         generate_suricata_config(
             config_path=config_path,
             interface="Ethernet",
-            log_dir=Path("C:\\some\\log"),
-            rule_dir=Path("C:\\rules"),
-            classification_file=Path("C:\\rules\\classification.config"),
-            reference_config_file=Path("C:\\rules\\reference.config"),
+            log_dir=Path(r"C:\some\log"),
+            rule_dir=Path(r"C:\rules"),
+            classification_file=Path(r"C:\rules\classification.config"),
+            reference_config_file=Path(r"C:\rules\reference.config"),
         )
         content = config_path.read_text(encoding="utf-8")
-        assert "C:/some/log" in content
-        assert "C:/rules" in content
-        assert "\\" not in content.replace("\\\\", "/")  # no remaining backslashes
+        assert r"C:\some\log" in content
+        assert r"C:\rules" in content
+
+    def test_eve_log_does_not_use_invalid_8x_options(self, tmp_path: Path) -> None:
+        """Regression: Suricata 8.x rejects ``metadata: yes`` and
+        ``http-body: yes`` under ``eve-log.types.alert``. The wizard
+        used to emit both, which crashed Suricata at output-module
+        setup with a generic ``output module 'eve-log': setup failed``.
+        """
+        config_path = tmp_path / "suricata.yaml"
+        generate_suricata_config(
+            config_path=config_path,
+            interface="Ethernet",
+            log_dir=tmp_path,
+            rule_dir=tmp_path,
+            classification_file=tmp_path / "c.config",
+            reference_config_file=tmp_path / "r.config",
+        )
+        content = config_path.read_text(encoding="utf-8")
+        # Strip comment lines so the warning text in the template
+        # itself doesn't trigger the regression.
+        non_comment = "\n".join(
+            line for line in content.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert "metadata: yes" not in non_comment
+        assert "http-body: yes" not in non_comment
+
+
+# ---------------------------------------------------------------------------
+# _resolve_interface_to_npf — friendly name -> NPF device path
+# ---------------------------------------------------------------------------
+
+
+class TestResolveInterfaceToNpf:
+    """Translate friendly adapter names to ``\\Device\\NPF_{guid}``.
+
+    Suricata 8.x on Windows crashes hard when ``-i`` is a friendly
+    adapter name; only NPF paths bind cleanly. The wizard collects
+    the friendly name from the picker, so the runtime spawn must
+    translate.
+    """
+
+    def test_passes_through_existing_npf_path(self) -> None:
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        path = r"\Device\NPF_{12345678-1234-1234-1234-123456789ABC}"
+        assert _resolve_interface_to_npf(path) == path
+
+    def test_passes_through_rpcap_uri(self) -> None:
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        uri = "rpcap://10.0.0.1:2002/eth0"
+        assert _resolve_interface_to_npf(uri) == uri
+
+    def test_empty_string_passes_through(self) -> None:
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        assert _resolve_interface_to_npf("") == ""
+
+    def test_friendly_name_resolved_to_npf_via_get_netadapter(self) -> None:
+        from unittest.mock import patch
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        fake_completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": "{12345678-1234-1234-1234-123456789ABC}\r\n",
+                "stderr": "",
+            },
+        )()
+        with patch("wardsoar.pc.local_suricata.subprocess.run", return_value=fake_completed):
+            result = _resolve_interface_to_npf("Ethernet")
+        assert result == r"\Device\NPF_{12345678-1234-1234-1234-123456789ABC}"
+
+    def test_friendly_name_passed_through_when_lookup_fails(self) -> None:
+        from unittest.mock import patch
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        fake_completed = type(
+            "Completed",
+            (),
+            {"returncode": 1, "stdout": "", "stderr": "no such adapter"},
+        )()
+        with patch("wardsoar.pc.local_suricata.subprocess.run", return_value=fake_completed):
+            result = _resolve_interface_to_npf("NonexistentAdapter")
+        assert result == "NonexistentAdapter"
+
+    def test_unexpected_output_passes_through(self) -> None:
+        from unittest.mock import patch
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        fake_completed = type(
+            "Completed",
+            (),
+            {"returncode": 0, "stdout": "garbage no braces", "stderr": ""},
+        )()
+        with patch("wardsoar.pc.local_suricata.subprocess.run", return_value=fake_completed):
+            result = _resolve_interface_to_npf("Ethernet")
+        assert result == "Ethernet"
+
+    def test_subprocess_error_passes_through(self) -> None:
+        from unittest.mock import patch
+        from wardsoar.pc.local_suricata import _resolve_interface_to_npf
+
+        with patch(
+            "wardsoar.pc.local_suricata.subprocess.run",
+            side_effect=OSError("ENOENT"),
+        ):
+            result = _resolve_interface_to_npf("Ethernet")
+        assert result == "Ethernet"
 
     def test_idempotent_overwrite(self, tmp_path: Path) -> None:
         config_path = tmp_path / "suricata.yaml"

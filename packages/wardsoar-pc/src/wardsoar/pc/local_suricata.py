@@ -179,21 +179,58 @@ class SuricataProcess:
             )
             return False
 
+        # Translate the friendly adapter name (e.g. ``"Ethernet"``)
+        # into the NPF device path (``\Device\NPF_{guid}``) Suricata
+        # 8.x on Windows actually accepts. Suricata 8.0.4 segfaults
+        # (``0xC0000005``) the moment it tries to bind the friendly
+        # name; only the NPF device path resolves cleanly to an
+        # Npcap handle. ``_resolve_interface_to_npf`` is best-effort:
+        # it returns the original string if it already looks like an
+        # NPF path or if the lookup fails, so the operator can still
+        # supply an explicit NPF path through the wizard.
+        capture_iface = _resolve_interface_to_npf(self._interface)
+        if capture_iface != self._interface:
+            logger.info(
+                "SuricataProcess.start: resolved interface %r -> %s",
+                self._interface,
+                capture_iface,
+            )
+
         cmd = [
             str(self._binary),
             "-c",
             str(self._config),
             "-i",
-            self._interface,
+            capture_iface,
             "-l",
             str(self._log_dir),
         ]
         logger.info("SuricataProcess.start: %s", " ".join(cmd))
 
+        # Npcap PATH injection — when Npcap is installed without the
+        # legacy WinPcap-compatible mode, ``wpcap.dll`` lives in
+        # ``%SystemRoot%\System32\Npcap\`` rather than directly in
+        # ``System32``. Suricata loads ``wpcap.dll`` via the Windows DLL
+        # search path, which inherits the parent process ``PATH``;
+        # without the Npcap subdirectory on PATH, the load resolves to
+        # nothing and Suricata segfaults (``0xC0000005``) the moment it
+        # tries to bind the capture device. Mirroring the approach the
+        # Suricata MSI's own ``run_suricata.bat`` uses keeps the spawn
+        # robust across both Npcap install modes.
+        env = dict(os.environ)
+        npcap_dir = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "Npcap"
+        if npcap_dir.is_dir():
+            existing_path = env.get("PATH", "")
+            if str(npcap_dir).lower() not in existing_path.lower():
+                env["PATH"] = (
+                    f"{npcap_dir}{os.pathsep}{existing_path}" if existing_path else str(npcap_dir)
+                )
+
         try:
             self._process = subprocess.Popen(  # nosec B603 — absolute paths only
                 cmd,
                 shell=False,
+                env=env,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (FileNotFoundError, OSError) as exc:
@@ -319,16 +356,44 @@ vars:
   address-groups:
     HOME_NET: "[192.168.0.0/16,10.0.0.0/8,172.16.0.0/12]"
     EXTERNAL_NET: "!$HOME_NET"
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    AIM_SERVERS: "$EXTERNAL_NET"
+    DC_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
   port-groups:
     HTTP_PORTS: "80"
     HTTPS_PORTS: "443"
-    SSH_PORTS: "22"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    GENEVE_PORTS: 6081
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+    SIP_PORTS: "[5060, 5061]"
 
 default-log-dir: {log_dir}
 
 stats:
   enabled: no
 
+# EVE JSON — Suricata 8.x dropped the boolean ``metadata: yes`` shorthand
+# (it now expects either ``metadata: no`` or a structured block). Leaving
+# the field out keeps the default (metadata enabled) without a parse error
+# at startup. Do NOT add ``metadata: yes`` or ``http-body: yes`` here —
+# both crash Suricata 8.x at output-module setup.
 outputs:
   - eve-log:
       enabled: yes
@@ -339,8 +404,6 @@ outputs:
             payload: yes
             payload-printable: yes
             packet: yes
-            metadata: yes
-            http-body: yes
         - dns
         - tls
         - ssh
@@ -348,8 +411,7 @@ outputs:
 
 default-rule-path: {rule_dir}
 rule-files:
-  - suricata.rules
-
+{rule_files_block}
 classification-file: {classification_file}
 reference-config-file: {reference_config_file}
 
@@ -371,8 +433,62 @@ logging:
     - file:
         enabled: yes
         level: notice
-        filename: {log_dir}/suricata.log
+        filename: {suricata_log_path}
 """
+
+# Rule files we know exist in a default Suricata 8.x install on Windows
+# and load cleanly. Suricata logs+ignores rules that fail to parse
+# (unknown keywords like ``file.magic`` in newer ET rulesets), so the
+# only thing we filter out are files that genuinely don't ship with the
+# install — keeping the list short and present.
+_DEFAULT_RULE_FILES: tuple[str, ...] = (
+    "botcc.rules",
+    "botcc.portgrouped.rules",
+    "ciarmy.rules",
+    "compromised.rules",
+    "drop.rules",
+    "dshield.rules",
+    "emerging-activex.rules",
+    "emerging-adware_pup.rules",
+    "emerging-attack_response.rules",
+    "emerging-chat.rules",
+    "emerging-coinminer.rules",
+    "emerging-current_events.rules",
+    "emerging-dns.rules",
+    "emerging-dos.rules",
+    "emerging-exploit.rules",
+    "emerging-ftp.rules",
+    "emerging-games.rules",
+    "emerging-icmp.rules",
+    "emerging-imap.rules",
+    "emerging-inappropriate.rules",
+    "emerging-info.rules",
+    "emerging-ja3.rules",
+    "emerging-malware.rules",
+    "emerging-misc.rules",
+    "emerging-mobile_malware.rules",
+    "emerging-netbios.rules",
+    "emerging-phishing.rules",
+    "emerging-p2p.rules",
+    "emerging-pop3.rules",
+    "emerging-rpc.rules",
+    "emerging-scada.rules",
+    "emerging-scan.rules",
+    "emerging-shellcode.rules",
+    "emerging-smtp.rules",
+    "emerging-snmp.rules",
+    "emerging-sql.rules",
+    "emerging-telnet.rules",
+    "emerging-tftp.rules",
+    "emerging-user_agents.rules",
+    "emerging-voip.rules",
+    "emerging-web_client.rules",
+    "emerging-web_server.rules",
+    "emerging-web_specific_apps.rules",
+    "emerging-worm.rules",
+    "tor.rules",
+    "stream-events.rules",
+)
 
 
 def generate_suricata_config(
@@ -409,13 +525,22 @@ def generate_suricata_config(
         The ``config_path`` (for convenience in fluent calls).
     """
     config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Filter the rule-file list against what's actually on disk so a
+    # leaner Suricata install (or a different ruleset version that
+    # dropped some files) doesn't fail at signature-load time.
+    available_rules = [name for name in _DEFAULT_RULE_FILES if (rule_dir / name).is_file()]
+    rule_files_block = "\n".join(f"  - {name}" for name in available_rules) or "  []"
+
     rendered = _CONFIG_TEMPLATE.format(
         interface=interface,
-        log_dir=str(log_dir).replace("\\", "/"),
+        log_dir=str(log_dir),
         eve_filename=EVE_JSON_FILENAME,
-        rule_dir=str(rule_dir).replace("\\", "/"),
-        classification_file=str(classification_file).replace("\\", "/"),
-        reference_config_file=str(reference_config_file).replace("\\", "/"),
+        rule_dir=str(rule_dir),
+        classification_file=str(classification_file),
+        reference_config_file=str(reference_config_file),
+        rule_files_block=rule_files_block,
+        suricata_log_path=str(log_dir / "suricata.log"),
     )
     config_path.write_text(rendered, encoding="utf-8")
     logger.info(
@@ -507,6 +632,80 @@ def find_suricata_install_dir() -> Optional[Path]:
         return default
 
     return None
+
+
+def _resolve_interface_to_npf(interface: str) -> str:
+    """Translate a friendly Windows adapter name to an NPF device path.
+
+    Suricata 8.x on Windows segfaults (``0xC0000005``) when ``-i`` is
+    passed a friendly name (``"Ethernet"``). Only the NPF device path
+    (``\\Device\\NPF_{<guid>}``) resolves cleanly to an Npcap handle.
+    The wizard collects the friendly name (recognisable to the
+    operator); this helper translates it at spawn time.
+
+    Behaviour:
+        * If ``interface`` is empty, an existing NPF path, or starts
+          with ``rpcap://``, return it unchanged — the caller has
+          already provided the form Suricata expects.
+        * Otherwise look the friendly name up via
+          ``Get-NetAdapter`` (a built-in PowerShell cmdlet that wraps
+          ``IPHelper`` ``GetAdaptersAddresses``). Return
+          ``\\Device\\NPF_{<guid>}`` on success.
+        * On any lookup failure, return the original string. Suricata
+          will surface the error in its own log; we'd rather let the
+          operator see the underlying message than silently swap to
+          a wrong adapter.
+    """
+    if not interface:
+        return interface
+    # Already an NPF or rpcap URI — pass through.
+    lowered = interface.lower()
+    if lowered.startswith(r"\device\npf_") or lowered.startswith("rpcap://"):
+        return interface
+
+    try:
+        result = subprocess.run(  # nosec B603 — fixed argv, no shell
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                f"(Get-NetAdapter -Name '{interface}' -ErrorAction Stop).InterfaceGuid",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning(
+            "_resolve_interface_to_npf(%s): Get-NetAdapter spawn failed (%s) — "
+            "passing the friendly name through; Suricata may crash.",
+            interface,
+            exc,
+        )
+        return interface
+
+    if result.returncode != 0:
+        logger.warning(
+            "_resolve_interface_to_npf(%s): Get-NetAdapter returned %d "
+            "(stderr=%r) — passing the friendly name through; Suricata may crash.",
+            interface,
+            result.returncode,
+            (result.stderr or "").strip()[:200],
+        )
+        return interface
+
+    guid = result.stdout.strip()
+    if not guid or not guid.startswith("{") or not guid.endswith("}"):
+        logger.warning(
+            "_resolve_interface_to_npf(%s): unexpected Get-NetAdapter output %r — "
+            "passing the friendly name through.",
+            interface,
+            guid,
+        )
+        return interface
+    return rf"\Device\NPF_{guid}"
 
 
 __all__ = (
