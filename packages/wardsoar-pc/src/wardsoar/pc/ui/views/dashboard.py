@@ -25,9 +25,11 @@ Uses PyQt-Fluent-Widgets + PySide6 QtCharts + QTableWidget.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import logging
-from collections import defaultdict
+import threading
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -44,6 +46,7 @@ from PySide6.QtGui import QColor, QCursor, QPainter
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
+    QSplitter,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -281,6 +284,38 @@ def _bucket_key(dt: datetime, scale: str) -> str:
     return dt.strftime("%b")
 
 
+def _humanize_age(ts: datetime, now: Optional[datetime] = None) -> str:
+    """Return a short relative-age label like ``"3m ago"`` or ``"2h ago"``.
+
+    Used in the Sources/Destinations tables for the *First seen* and
+    *Last seen* columns. Shorter than an absolute timestamp and lets
+    the operator scan the table for "what's recent" at a glance.
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    delta = reference - ts
+    seconds = int(delta.total_seconds())
+    if seconds < 0:
+        return "now"
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    days = hours // 24
+    if days < 30:
+        return f"{days}d ago"
+    months = days // 30
+    if months < 12:
+        return f"{months}mo ago"
+    years = days // 365
+    return f"{years}y ago"
+
+
 def _time_window(scale: str) -> timedelta:
     """Return the lookback window for the given scale."""
     if scale == "minute":
@@ -337,15 +372,29 @@ class DashboardView(QWidget):
     Signals:
         mode_changed: Emitted with the new :class:`~src.models.WardMode`
             value ("monitor", "protect", or "hard_protect").
+        ip_enrichment_done: Emitted from a background daemon thread
+            once a batch of ASN lookups completes. The slot rebuilds
+            the IP tables on the main Qt thread so the freshly
+            enriched rows render their Owner / Country / Tag.
     """
 
     mode_changed = Signal(str)
+    ip_enrichment_done = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
+
+        # IP enrichment state.
+        # ``_enrichment_inflight`` holds IPs currently being resolved
+        # by the background thread so we never queue the same lookup
+        # twice. The signal is connected to ``_on_enrichment_done``
+        # which simply re-runs ``_rebuild_ip_tables`` to pick up the
+        # freshly cached rows.
+        self._enrichment_inflight: set[str] = set()
+        self.ip_enrichment_done.connect(self._on_enrichment_done)
 
         # --- Status banner ---
         self._status_card = SimpleCardWidget()
@@ -405,50 +454,77 @@ class DashboardView(QWidget):
         self._alerts_chart = _create_dark_chart("Alerts (7 j)")
         self._alerts_view = QChartView(self._alerts_chart)
         self._alerts_view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self._alerts_view.setFixedHeight(180)
+        self._alerts_view.setFixedHeight(225)
         self._build_alerts_chart()
         right_side.addWidget(self._alerts_view)
 
-        # --- Sources table (full width, stretch=1) ---
-        self._sources_table = self._build_ip_table(("IP", "Alerts", "Owner", "Country", "Tag"))
+        # --- Sources + Destinations side-by-side via QSplitter ---
+        # The splitter gives the operator a draggable handle in the
+        # middle to give one tableau more room than the other when
+        # needed. Defaults to 50/50.
+        _ip_table_columns = (
+            "IP",
+            "Alerts",
+            "Owner",
+            "Country",
+            "Verdict",
+            "Reputation",
+            "Process",
+        )
+        self._sources_table = self._build_ip_table(_ip_table_columns)
         self._sources_caption_label = CaptionLabel("Sources (7 j)")
         sources_card = SimpleCardWidget()
         sources_layout = QVBoxLayout(sources_card)
         sources_layout.setContentsMargins(16, 12, 16, 12)
         sources_layout.addWidget(self._sources_caption_label)
         sources_layout.addWidget(self._sources_table)
-        right_side.addWidget(sources_card, stretch=1)
 
-        # --- Destinations table (full width, stretch=1) ---
-        self._destinations_table = self._build_ip_table(("IP", "Alerts", "Owner", "Country", "Tag"))
+        self._destinations_table = self._build_ip_table(_ip_table_columns)
         self._destinations_caption_label = CaptionLabel("Destinations (7 j)")
         destinations_card = SimpleCardWidget()
         destinations_layout = QVBoxLayout(destinations_card)
         destinations_layout.setContentsMargins(16, 12, 16, 12)
         destinations_layout.addWidget(self._destinations_caption_label)
         destinations_layout.addWidget(self._destinations_table)
-        right_side.addWidget(destinations_card, stretch=1)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(sources_card)
+        splitter.addWidget(destinations_card)
+        splitter.setChildrenCollapsible(False)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([1, 1])
+        right_side.addWidget(splitter, stretch=1)
 
         layout.addLayout(right_side, stretch=1)
 
-        # ASN enricher — initialised lazily because it touches the
-        # SQLite cache file that lives in the user's data directory.
-        # Lookups are cache-only (sync, fast) — uncached IPs render
-        # as "—" so the UI stays responsive. The pipeline's
-        # ``alert_enrichment`` populates the cache for every alert
-        # that passes through, so by the time an alert reaches the
-        # Dashboard its IPs are warm.
+        # Enrichment helpers — instantiated lazily so the UI never
+        # crashes on a missing cache file. Cache/snapshot-only reads
+        # keep the UI thread non-blocking; a background thread warms
+        # the ASN cache for any IP that renders as "—".
+        # * AsnEnricher: SQLite ASN cache (Owner / Country)
+        # * CdnAllowlist: in-memory dict (kept for future use; the
+        #   Type column was retired — the catégorie was redundant
+        #   with Owner — but the helper is still constructed in case
+        #   another widget needs it).
+        # * IntelManager: loads disk snapshots in its constructor —
+        #   safe to instantiate without ``start()`` (which would
+        #   spawn the background refresh task).
         self._asn_enricher: Optional[Any] = None
         self._cdn_allowlist: Optional[Any] = None
+        self._intel_manager: Optional[Any] = None
         try:
             from wardsoar.core.asn_enricher import AsnEnricher
             from wardsoar.core.cdn_allowlist import CdnAllowlist
-            from wardsoar.core.config import get_data_dir, get_bundle_dir
+            from wardsoar.core.config import get_bundle_dir, get_data_dir
+            from wardsoar.core.intel.manager import IntelManager
 
-            self._asn_enricher = AsnEnricher(cache_path=get_data_dir() / "data" / "asn_cache.db")
+            data_dir = get_data_dir()
+            self._asn_enricher = AsnEnricher(cache_path=data_dir / "data" / "asn_cache.db")
             cdn_path = get_bundle_dir() / "config" / "cdn_allowlist.yaml"
             if cdn_path.exists():
                 self._cdn_allowlist = CdnAllowlist(cdn_path)
+            self._intel_manager = IntelManager(cache_dir=data_dir / "intel_feeds")
         except Exception as exc:  # noqa: BLE001 — UI must never crash on enrichment init
             logger.debug("Dashboard enrichment init failed: %s", exc)
 
@@ -613,9 +689,12 @@ class DashboardView(QWidget):
     def _build_ip_table(self, headers: tuple[str, ...]) -> TableWidget:
         """Common builder for Sources and Destinations tables.
 
-        Both tables share the same column structure; the difference
-        is the data source (``src_ip`` vs ``dest_ip``) handled in
-        :meth:`_rebuild_ip_tables`.
+        Both tables share the same 10-column structure; the
+        difference is the data source (``src_ip`` vs ``dest_ip``)
+        handled in :meth:`_rebuild_ip_tables`. Owner is the only
+        stretchy column — every other column fits its content so
+        long Owner names like ``"Akamai International B.V."``
+        compress gracefully when the splitter narrows the table.
         """
         table = TableWidget()
         table.setColumnCount(len(headers))
@@ -624,24 +703,31 @@ class DashboardView(QWidget):
         table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
         table.setShowGrid(False)
         table.setSortingEnabled(False)
-        # IP and Owner stretch; Alerts/Country/Tag fit content.
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        for col in range(len(headers)):
+            mode = (
+                QHeaderView.ResizeMode.Stretch
+                if col == 2  # Owner
+                else QHeaderView.ResizeMode.ResizeToContents
+            )
+            header.setSectionResizeMode(col, mode)
         return table
 
     def _rebuild_ip_tables(self, top_n: int = 20) -> None:
         """Refresh both Sources and Destinations tables for the current scale.
 
-        Aggregates the filtered records by ``src_ip`` and ``dest_ip``,
-        sorts by alert count desc, and resolves Owner / Country / Tag
-        from the cached ASN lookup. Cache-only (sync) — uncached IPs
-        render as ``—`` so the UI stays responsive. The pipeline's
-        ``alert_enrichment`` warms the cache for every alert that
-        passes through.
+        For every IP visible in either table we precompute:
+
+        * count, dominant verdict (most common across the IP's records),
+          first-seen timestamp, last-seen timestamp — all derived
+          from ``_alert_records`` in a single pass per field.
+        * Owner / Country / Tag via the cached ASN lookup
+          (cache-only fast path; uncached IPs queue a background
+          enrichment that re-renders the table when it lands).
+
+        Reputation and Process columns currently render as ``—``;
+        they are wired to populate from the future intel-aggregator
+        (P0) and Sysmon EID 3 query helper (P1) respectively.
         """
         records = self._filtered_records()
         suffix = self._scale_suffix()
@@ -652,67 +738,212 @@ class DashboardView(QWidget):
 
         src_counts = self._aggregate_by_ip(records, "src")
         dst_counts = self._aggregate_by_ip(records, "dest")
-        self._populate_ip_table(self._sources_table, src_counts, top_n)
-        self._populate_ip_table(self._destinations_table, dst_counts, top_n)
+        src_aux = self._aggregate_aux(records, "src")
+        dst_aux = self._aggregate_aux(records, "dest")
+        self._populate_ip_table(self._sources_table, src_counts, src_aux, top_n)
+        self._populate_ip_table(self._destinations_table, dst_counts, dst_aux, top_n)
+
+        # Schedule async enrichment for every visible IP still
+        # uncached. Bounded by ``top_n`` per table so we never fire a
+        # storm of WHOIS queries on a buffered fleet.
+        to_enrich: set[str] = set()
+        for counts in (src_counts, dst_counts):
+            top_ips = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+            for ip, _count in top_ips:
+                if self._needs_enrichment(ip):
+                    to_enrich.add(ip)
+        if to_enrich:
+            self._trigger_async_enrichment(to_enrich)
+
+    def _aggregate_aux(
+        self,
+        records: list[tuple[datetime, str, str, str, bool]],
+        field: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Per-IP aggregation of dominant verdict + first/last seen timestamps.
+
+        Single pass over the records; returns
+        ``{ip: {"verdict": str, "first": datetime, "last": datetime}}``.
+        """
+        verdict_counts: dict[str, Counter[str]] = defaultdict(Counter)
+        first_seen: dict[str, datetime] = {}
+        last_seen: dict[str, datetime] = {}
+        for ts, src, dst, verdict, _b in records:
+            target = src if field == "src" else dst
+            if not target:
+                continue
+            verdict_counts[target][verdict] += 1
+            if target not in first_seen or ts < first_seen[target]:
+                first_seen[target] = ts
+            if target not in last_seen or ts > last_seen[target]:
+                last_seen[target] = ts
+        out: dict[str, dict[str, Any]] = {}
+        for ip, counts in verdict_counts.items():
+            out[ip] = {
+                "verdict": counts.most_common(1)[0][0] if counts else "",
+                "first": first_seen.get(ip),
+                "last": last_seen.get(ip),
+            }
+        return out
+
+    def _needs_enrichment(self, ip: str) -> bool:
+        """True when the IP has no ASN record in cache and is publicly routable."""
+        if not ip or self._asn_enricher is None:
+            return False
+        if ip in self._enrichment_inflight:
+            return False
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return False
+        try:
+            cached = self._asn_enricher._cache_lookup(ip)  # noqa: SLF001
+        except Exception:  # noqa: BLE001 — never break the UI
+            return False
+        return cached is None
+
+    def _trigger_async_enrichment(self, ips: set[str]) -> None:
+        """Kick a daemon thread that resolves ``ips`` via the AsnEnricher.
+
+        Runs entirely outside the Qt event loop so the UI stays
+        responsive even when the WHOIS server is slow. The thread
+        emits :attr:`ip_enrichment_done` from its own context; Qt
+        re-queues that signal onto the main thread before
+        :meth:`_on_enrichment_done` fires.
+
+        Fail-safe: per-IP errors are swallowed so a single dead IP
+        does not poison the batch. The thread always emits the
+        completion signal so the UI never gets stuck waiting.
+        """
+        if not ips or self._asn_enricher is None:
+            return
+        self._enrichment_inflight |= ips
+        enricher = self._asn_enricher
+
+        def worker(ip_set: set[str]) -> None:
+            async def _run() -> None:
+                for ip in ip_set:
+                    try:
+                        await enricher.lookup(ip)
+                    except Exception:  # noqa: BLE001 — fail-safe per IP
+                        logger.debug("Dashboard async enrichment failed for %s", ip)
+
+            try:
+                asyncio.run(_run())
+            except Exception:  # noqa: BLE001 — never let the thread crash silently
+                logger.debug("Dashboard enrichment thread crashed", exc_info=True)
+            finally:
+                self._enrichment_inflight.difference_update(ip_set)
+                self.ip_enrichment_done.emit()
+
+        threading.Thread(
+            target=worker,
+            args=(set(ips),),
+            daemon=True,
+            name="dashboard-asn-enrichment",
+        ).start()
+
+    def _on_enrichment_done(self) -> None:
+        """Slot fired on the Qt main thread once an enrichment batch finishes."""
+        # Cheap re-render: ``_populate_ip_table`` reads the cache
+        # again and now picks up the just-resolved rows. The retrigger
+        # also runs ``_needs_enrichment`` again, but every freshly
+        # cached IP returns ``False`` so we don't loop.
+        self._rebuild_ip_tables()
 
     def _populate_ip_table(
         self,
         table: TableWidget,
         ip_counts: dict[str, int],
+        ip_aux: dict[str, dict[str, Any]],
         top_n: int,
     ) -> None:
-        """Fill one table with the top-N IPs by alert count."""
+        """Fill one table with the top-N IPs by alert count.
+
+        Column order matches the headers in :meth:`_build_ip_table`:
+        ``IP / Alerts / Owner / Country / Verdict / Reputation /
+        Process``. ``Reputation`` is computed cache-only via the local
+        intel feeds (URLhaus / ThreatFox / Feodo / Spamhaus / FireHol
+        / Blocklist.de). ``Process`` renders as ``—`` until the
+        Sysmon EID 3 query helper (P1) lands.
+        """
         rows = sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
         table.setRowCount(len(rows))
         for row_idx, (ip, count) in enumerate(rows):
-            owner, country, tag = self._resolve_ip_metadata(ip)
+            owner, country = self._resolve_ip_metadata(ip)
+            aux = ip_aux.get(ip, {})
+            verdict = str(aux.get("verdict") or "")
+            reputation = self._resolve_ip_reputation(ip)
+
             table.setItem(row_idx, 0, QTableWidgetItem(ip))
             count_item = QTableWidgetItem(f"{count}")
             count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             table.setItem(row_idx, 1, count_item)
             table.setItem(row_idx, 2, QTableWidgetItem(owner))
             table.setItem(row_idx, 3, QTableWidgetItem(country))
-            table.setItem(row_idx, 4, QTableWidgetItem(tag))
+            table.setItem(row_idx, 4, QTableWidgetItem(verdict))
+            table.setItem(row_idx, 5, QTableWidgetItem(reputation))
+            table.setItem(row_idx, 6, QTableWidgetItem("—"))  # Process (P1)
 
-    def _resolve_ip_metadata(self, ip: str) -> tuple[str, str, str]:
-        """Return ``(owner, country, tag)`` for an IP — cache-only.
+    def _resolve_ip_metadata(self, ip: str) -> tuple[str, str]:
+        """Return ``(owner, country)`` for an IP — cache-only.
 
         For RFC1918 / loopback / link-local addresses the ASN cache
-        will never carry an answer; we synthesise a ``[lan]`` tag and
-        skip the network lookup. For external IPs we read the cache
-        directly via the private ``_cache_lookup`` so the UI thread
-        never blocks on a network call.
+        will never carry an answer; we return ``"(local network)"``
+        and skip the network lookup. For external IPs we read the
+        cache directly via the private ``_cache_lookup`` so the UI
+        thread never blocks on a network call.
         """
         if not ip:
-            return ("—", "—", "—")
+            return ("—", "—")
         try:
             addr = ipaddress.ip_address(ip)
         except ValueError:
-            return ("—", "—", "—")
+            return ("—", "—")
         if addr.is_private or addr.is_loopback or addr.is_link_local:
-            return ("(local network)", "—", "[lan]")
+            return ("(local network)", "—")
 
         if self._asn_enricher is None:
-            return ("—", "—", "—")
+            return ("—", "—")
         try:
             info = self._asn_enricher._cache_lookup(ip)  # noqa: SLF001 — sync fast path
         except Exception:  # noqa: BLE001 — never break the UI on a cache hiccup
-            return ("—", "—", "—")
+            return ("—", "—")
         if info is None:
-            return ("—", "—", "—")
+            return ("—", "—")
+        return (info.org or info.name or "—", info.country or "—")
 
-        owner = info.org or info.name or "—"
-        country = info.country or "—"
+    def _resolve_ip_reputation(self, ip: str) -> str:
+        """Return a short reputation label for ``ip`` — local-cache feeds only.
 
-        tag = ""
-        if self._cdn_allowlist is not None and info.asn:
-            try:
-                match = self._cdn_allowlist.classify_asn(info.asn)
-            except Exception:  # noqa: BLE001
-                match = None
-            if match is not None:
-                tag = f"[{match.category}] {match.organisation}"
-        return (owner, country, tag)
+        MVP using the offline-cached intel feeds (URLhaus, ThreatFox,
+        Feodo Tracker, Spamhaus DROP, FireHol, Blocklist.de). Each
+        feed is checked in O(1) against its in-memory snapshot. No
+        network calls — the UI stays responsive.
+
+        Output:
+        * ``"🔴 N"`` — N feeds flag the IP as malicious
+        * ``"✓ clean"`` — IP is publicly routable and no feed flagged it
+        * ``"—"`` — LAN address or no intel manager available
+        """
+        if not ip or self._intel_manager is None:
+            return "—"
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return "—"
+        if addr.is_private or addr.is_loopback or addr.is_link_local:
+            return "—"
+        try:
+            results = self._intel_manager.query_all_for_ip(ip)
+        except Exception:  # noqa: BLE001 — UI must never crash on a feed lookup
+            return "—"
+        bad_count = sum(1 for r in results if r.level == "bad")
+        if bad_count > 0:
+            return f"🔴 {bad_count}"
+        return "✓ clean"
 
     # ----------------------------------------------------------------
     # Public update methods
