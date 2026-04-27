@@ -235,3 +235,50 @@ class TestGenerateConfigSuricataBlock:
         assert parsed == ["100.64.0.0/10", "10.13.0.0/16"]
         # And keep the silenced yaml.dump callable referenced (avoids ruff).
         _ = _yaml
+
+    def test_generate_config_calls_generate_suricata_config(
+        self, wizard_factory: object, tmp_path: Path
+    ) -> None:
+        """Regression guard: when local Suricata is selected and Suricata
+        is installed, ``_generate_config`` must call
+        ``generate_suricata_config`` so the runtime can spawn the local
+        Suricata subprocess. Without this call the wizard silently drops
+        the local source despite the operator answering "yes".
+        """
+        wizard = wizard_factory(
+            sources=SourceChoices(netgate=True, virus_sniff=False, suricata_local=True)
+        )
+        # Pick the (mocked) interface so interface_name resolves to a real value.
+        wizard._fields["suricata_interface"].setCurrentIndex(0)  # type: ignore[attr-defined]
+
+        fake_suricata_dir = tmp_path / "suricata_install"
+        fake_suricata_dir.mkdir()
+
+        with (
+            patch(
+                "wardsoar.pc.installer_helpers.is_suricata_installed",
+                return_value=(True, fake_suricata_dir / "suricata.exe"),
+            ),
+            patch(
+                "wardsoar.pc.local_suricata.generate_suricata_config"
+            ) as mock_gen,
+            patch("wardsoar.pc.ui.setup_wizard.yaml.dump"),
+        ):
+            try:
+                wizard._generate_config()  # type: ignore[attr-defined]
+            except KeyError:
+                # Other unrelated fields may be unset in this minimal
+                # wizard build; we only care about whether the suricata
+                # config call ran.
+                pass
+
+        assert mock_gen.called, (
+            "generate_suricata_config was not invoked when suricata_local=True "
+            "and suricata.exe was discoverable. The wizard regressed: it "
+            "persists the suricata_local config block but never writes the "
+            "suricata.yaml the runtime needs to spawn the subprocess."
+        )
+        kwargs = mock_gen.call_args.kwargs
+        assert kwargs["interface"] == "Ethernet0"
+        assert kwargs["config_path"].name == "suricata.yaml"
+        assert kwargs["rule_dir"] == fake_suricata_dir / "rules"

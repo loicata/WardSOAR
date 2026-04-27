@@ -1768,6 +1768,53 @@ class SetupWizard(QDialog):
                 "local_subnets_cidr": subnets_list,
             }
 
+            # Generate the runtime suricata.yaml the local agent reads
+            # at boot. Without this, ``LocalSuricataAgent.startup()``
+            # logs ``config not found`` and the pipeline silently falls
+            # back to a Netgate-only stream — even when the operator
+            # answered Yes to local Suricata. Idempotent: writing the
+            # same arguments twice yields the same file content.
+            if (
+                self._suricata_choice
+                and interface_name
+                and interface_name != "(no interface detected)"
+            ):
+                from wardsoar.pc.installer_helpers import is_suricata_installed
+                from wardsoar.pc.local_suricata import generate_suricata_config
+
+                try:
+                    suricata_present, suricata_exe = is_suricata_installed()
+                except Exception:  # noqa: BLE001 — installer probe must not abort wizard finish
+                    suricata_present, suricata_exe = False, None
+
+                if suricata_present and suricata_exe is not None:
+                    suricata_install_dir = suricata_exe.parent
+                    runtime_dir = data_dir / "suricata"
+                    runtime_dir.mkdir(parents=True, exist_ok=True)
+                    try:
+                        generated = generate_suricata_config(
+                            config_path=runtime_dir / "suricata.yaml",
+                            interface=interface_name,
+                            log_dir=runtime_dir,
+                            rule_dir=suricata_install_dir / "rules",
+                            classification_file=suricata_install_dir / "classification.config",
+                            reference_config_file=suricata_install_dir / "reference.config",
+                        )
+                        logger.info("Generated suricata runtime config at %s", generated)
+                    except OSError as exc:
+                        logger.warning(
+                            "Failed to generate suricata.yaml at %s: %s — operator can "
+                            "still proceed; runtime will fall back to Netgate-only stream",
+                            runtime_dir / "suricata.yaml",
+                            exc,
+                        )
+                else:
+                    logger.warning(
+                        "Local Suricata selected but suricata.exe not found — "
+                        "skipping runtime config generation. Operator must "
+                        "install Suricata and re-run the wizard."
+                    )
+
         config_dir = data_dir / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         config_path = config_dir / "config.yaml"
