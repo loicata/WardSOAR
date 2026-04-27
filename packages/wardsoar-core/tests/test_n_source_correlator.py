@@ -584,3 +584,55 @@ class TestStatusInjection:
 def test_default_window_exposed() -> None:
     """Pipeline reads this default — fail-loud if it disappears."""
     assert DEFAULT_WINDOW_S == 120.0
+
+
+# ---------------------------------------------------------------------------
+# Pump startup invocation (regression for v0.25.5)
+# ---------------------------------------------------------------------------
+
+
+class TestPumpStartup:
+    """``_pump`` must call ``agent.startup()`` so subprocess-owning agents
+    (LocalSuricataAgent) spawn their child on the consumer's loop.
+
+    Pre-fix the spawn was scheduled on the main UI thread loop, which
+    Qt does not run — silently dropping every local source. The
+    correlator now drives startup itself.
+    """
+
+    @pytest.mark.asyncio
+    async def test_startup_called_when_present(self) -> None:
+        startup_calls: list[str] = []
+
+        class _AgentWithStartup(_ScriptedAgent):
+            async def startup(self) -> None:
+                startup_calls.append("called")
+
+        agent = _AgentWithStartup(events=[])
+        correlator = NSourceCorrelator(sources={"local": agent})
+        # Drain briefly so _pump actually runs.
+        await _drain(correlator, count=1, timeout=0.5)
+        assert startup_calls == ["called"]
+
+    @pytest.mark.asyncio
+    async def test_no_startup_method_is_silently_skipped(self) -> None:
+        # _ScriptedAgent does NOT define startup — pump must not fail.
+        agent = _ScriptedAgent(events=[_alert("1.1.1.1", "2.2.2.2", 1)])
+        correlator = NSourceCorrelator(sources={"only": agent})
+        events = await _drain(correlator, count=1, timeout=1.0)
+        # We at least see the single-source verdict bundle.
+        assert any("alert" in e for e in events)
+
+    @pytest.mark.asyncio
+    async def test_startup_failure_does_not_crash_pump(self) -> None:
+        class _BrokenStartupAgent(_ScriptedAgent):
+            async def startup(self) -> None:
+                raise RuntimeError("boom")
+
+        agent = _BrokenStartupAgent(events=[_alert("1.1.1.1", "2.2.2.2", 1)])
+        correlator = NSourceCorrelator(sources={"local": agent})
+        # Pump should still iterate stream_alerts — startup failure is logged
+        # but not propagated. Returns whatever arrives in the timeout window.
+        events = await _drain(correlator, count=1, timeout=1.0)
+        # The stream still produces an event despite the failed startup.
+        assert any("alert" in e for e in events)

@@ -128,7 +128,14 @@ class TestDualSourceMethod:
         body = match.group(1)
         assert "reconciliation_window_s" in body
 
-    def test_method_schedules_local_startup(self, app_source: str) -> None:
+    def test_method_does_not_schedule_startup_on_main_loop(self, app_source: str) -> None:
+        """Regression guard for v0.25.5.
+
+        Earlier versions called ``loop.create_task(local_agent.startup())``
+        from the main UI thread, which silently dropped the spawn because
+        Qt does not run an asyncio loop. Startup is now delegated to
+        ``NSourceCorrelator._pump`` so it runs on the consumer's loop.
+        """
         match = re.search(
             r"def _start_dual_source_stream_consumer\(.*?\n(.*?)(?=\n    def |\Z)",
             app_source,
@@ -136,8 +143,10 @@ class TestDualSourceMethod:
         )
         assert match is not None
         body = match.group(1)
-        assert "local_agent.startup()" in body
-        assert "create_task" in body, "Suricata spawn must run on the engine loop"
+        assert "loop.create_task(local_agent.startup())" not in body, (
+            "Startup must NOT be scheduled on the main thread loop — "
+            "NSourceCorrelator._pump now drives startup on the consumer loop"
+        )
 
     def test_method_wraps_correlator_in_consumer(self, app_source: str) -> None:
         match = re.search(

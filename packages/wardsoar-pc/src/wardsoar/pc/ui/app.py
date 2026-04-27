@@ -908,13 +908,12 @@ class WardApp:
             blocker=WindowsFirewallBlocker(),
         )
 
-        # Spawn Suricata before the consumer starts tailing eve.json.
-        # The agent's ``startup`` is async, so schedule it on the
-        # engine loop and keep going — ``stream_alerts`` itself
-        # recovers from a missing file (Suricata still booting) so
-        # we don't need to wait for the spawn to complete here.
-        loop = asyncio.get_event_loop()
-        loop.create_task(local_agent.startup())
+        # Suricata subprocess startup is now driven by ``NSourceCorrelator._pump``
+        # so it runs on the consumer thread's loop (which is also the loop
+        # that will read the produced eve.json). The previous pattern of
+        # scheduling ``local_agent.startup()`` here on a never-running main
+        # thread loop silently dropped the spawn — the local source then
+        # appeared as ``silent`` in every corroboration window.
 
         # ----- Reconciliation window: read + clamp -----
         # Q1 doctrine: 120 s default, configurable in [30, 180].

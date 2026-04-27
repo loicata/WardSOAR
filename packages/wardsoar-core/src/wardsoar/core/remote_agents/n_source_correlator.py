@@ -336,7 +336,32 @@ class NSourceCorrelator:
     # ------------------------------------------------------------------
 
     async def _pump(self, source_name: str, agent: RemoteAgent) -> None:
-        """Drain one source's stream and feed events into the correlation logic."""
+        """Drain one source's stream and feed events into the correlation logic.
+
+        Calls ``agent.startup()`` first when the agent exposes one. Some
+        agents (e.g. ``LocalSuricataAgent``) own a subprocess that must
+        be spawned before ``stream_alerts`` can yield anything; running
+        startup on the pump's loop guarantees the subprocess is created
+        on the loop that will later read its output. ``startup`` is
+        optional on the ``RemoteAgent`` protocol — agents without one
+        (Netgate over SSH, NoOpAgent) skip it transparently.
+        """
+        startup = getattr(agent, "startup", None)
+        if startup is not None and callable(startup):
+            try:
+                result = startup()
+                if asyncio.iscoroutine(result):
+                    await result
+                logger.info("NSourceCorrelator: %s startup completed", source_name)
+            except Exception as exc:  # noqa: BLE001 — startup failure must not crash the pump
+                detail = str(exc) or type(exc).__name__
+                logger.error(
+                    "NSourceCorrelator: %s startup failed (%s) — pump still "
+                    "tries to consume stream (some agents recover from a missing "
+                    "data file once it appears)",
+                    source_name,
+                    detail,
+                )
         try:
             async for event in agent.stream_alerts():
                 if self._stopped:
